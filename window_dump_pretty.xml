@@ -1,0 +1,18 @@
+<?xml version='1.0' encoding='UTF-8' standalone='yes' ?>
+<hierarchy rotation="0">
+<node index="0" text="" resource-id="" class="android.widget.FrameLayout" package="com.lucapiciollo.filetto" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[0,0][1080,2340]" drawing-order="0" hint="">
+<node index="0" text="" resource-id="" class="android.widget.FrameLayout" package="com.lucapiciollo.filetto" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[0,0][1080,2340]" drawing-order="1" hint="">
+<node index="0" text="" resource-id="android:id/content" class="android.widget.FrameLayout" package="com.lucapiciollo.filetto" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[0,0][1080,2340]" drawing-order="1" hint="">
+<node index="0" text="" resource-id="" class="android.widget.ScrollView" package="com.lucapiciollo.filetto" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="true" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[0,0][1080,2340]" drawing-order="1" hint="">
+<node index="0" text="" resource-id="" class="android.widget.LinearLayout" package="com.lucapiciollo.filetto" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[0,0][1080,2340]" drawing-order="1" hint="">
+<node index="0" text="" resource-id="" class="android.widget.LinearLayout" package="com.lucapiciollo.filetto" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[68,90][1012,2256]" drawing-order="1" hint="">
+<node index="0" text="" resource-id="" class="android.view.View" package="com.lucapiciollo.filetto" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[68,90][764,2256]" drawing-order="1" hint="" />
+<node index="1" text="⚙" resource-id="" class="android.widget.Button" package="com.lucapiciollo.filetto" content-desc="" checkable="false" checked="false" clickable="true" enabled="true" focusable="true" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[764,1105][1012,1240]" drawing-order="2" hint="" />
+</node>
+</node>
+</node>
+</node>
+</node>
+<node index="1" text="" resource-id="android:id/navigationBarBackground" class="android.view.View" package="com.lucapiciollo.filetto" content-desc="" checkable="false" checked="false" clickable="false" enabled="true" focusable="false" focused="false" scrollable="false" long-clickable="false" password="false" selected="false" bounds="[0,2205][1080,2340]" drawing-order="2" hint="" />
+</node>
+</hierarchy>
