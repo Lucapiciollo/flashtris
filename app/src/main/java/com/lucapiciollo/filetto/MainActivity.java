@@ -112,7 +112,10 @@ public class MainActivity extends Activity {
         topBar.setOrientation(LinearLayout.HORIZONTAL);
         topBar.setGravity(Gravity.CENTER_VERTICAL);
         View spacer = new View(this);
-        topBar.addView(spacer, weighted());
+        // Explicit 0 height (not WRAP_CONTENT): a bare View measured WRAP_CONTENT under an
+        // AT_MOST spec expands to fill all available space (View#getDefaultSize returns the
+        // full spec size for AT_MOST, not 0), which would blow up topBar to fill the screen.
+        topBar.addView(spacer, new LinearLayout.LayoutParams(0, 0, 1f));
         Button settingsBtn = iconButton("⚙");
         settingsBtn.setOnClickListener(v -> {
             sounds.tap();
