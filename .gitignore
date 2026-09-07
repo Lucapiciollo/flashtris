@@ -1,0 +1,38 @@
+# Gradle
+.gradle/
+build/
+app/build/
+out/
+
+# Local configuration
+local.properties
+
+# IDE - Android Studio / IntelliJ
+.idea/
+*.iml
+*.ipr
+*.iws
+captures/
+.navigation/
+
+# IDE - VS Code
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Signing (never commit keystores or credentials)
+*.jks
+*.keystore
+keystore.properties
+keystore/
+
+# Logs
+*.log
+
+# Do NOT ignore the Gradle wrapper, it must stay versioned
+!gradle/wrapper/gradle-wrapper.jar
+!gradle/wrapper/gradle-wrapper.properties
+!gradlew
+!gradlew.bat
