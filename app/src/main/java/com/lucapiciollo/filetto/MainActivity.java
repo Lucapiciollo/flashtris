@@ -1199,6 +1199,13 @@ public class MainActivity extends Activity {
         root.addView(settingsToggleRow("Vibrazione", sounds.isVibrationEnabled(), sounds::setVibrationEnabled));
         root.addView(space(24));
 
+        root.addView(neonDivider());
+        TextView appInfo = caption(appVersionLabel());
+        root.addView(appInfo);
+        TextView authorInfo = caption("Sviluppato da Luca Piciollo");
+        root.addView(authorInfo);
+        root.addView(space(20));
+
         Button back = secondaryButton("INDIETRO");
         back.setOnClickListener(v -> {
             sounds.tap();
@@ -1206,6 +1213,16 @@ public class MainActivity extends Activity {
         });
         root.addView(back);
         renderScreen(root);
+    }
+
+    /** "FlashTris vX.Y.Z" label built from the installed package's versionName (falls back gracefully). */
+    private String appVersionLabel() {
+        try {
+            String versionName = getPackageManager().getPackageInfo(getPackageName(), 0).versionName;
+            return "FlashTris v" + (versionName != null ? versionName : "?");
+        } catch (PackageManager.NameNotFoundException e) {
+            return "FlashTris";
+        }
     }
 
     private interface BoolConsumer {
