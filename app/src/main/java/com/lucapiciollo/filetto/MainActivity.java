@@ -66,6 +66,7 @@ public class MainActivity extends Activity {
     private GameSounds sounds;
     private String endpointId;
     private boolean host;
+    private boolean vsCpu;
     private boolean connected;
     private boolean nicknameSent;
     private String myNickname = "";
@@ -155,6 +156,14 @@ public class MainActivity extends Activity {
             if (ensurePermissions()) startDiscovery();
         });
         root.addView(find);
+        root.addView(space(12));
+
+        Button cpuButton = secondaryButton("🤖 SFIDA LA CPU");
+        cpuButton.setOnClickListener(v -> {
+            sounds.tap();
+            startVsCpu();
+        });
+        root.addView(cpuButton);
         root.addView(space(18));
 
         LinearLayout audioRow = new LinearLayout(this);
@@ -479,6 +488,15 @@ public class MainActivity extends Activity {
         return card;
     }
 
+    /** Starts a local single-player match against the {@link GameAI} opponent (no Nearby connection involved). */
+    private void startVsCpu() {
+        vsCpu = true;
+        host = true;
+        myNickname = "Tu";
+        opponentNickname = "CPU";
+        showSymbolChoice();
+    }
+
     private void selectHostSymbol(char symbol) {
         mySymbol = symbol;
         opponentSymbol = symbol == 'X' ? 'O' : 'X';
@@ -494,6 +512,7 @@ public class MainActivity extends Activity {
         } catch (JSONException ignored) { }
         send(msg);
         showGame();
+        maybeTriggerCpuMove();
     }
 
     private void showGame() {
@@ -609,6 +628,19 @@ public class MainActivity extends Activity {
         broadcastState();
         renderBoard();
         if (gameOver) showEndDialogAfterDelay();
+        else maybeTriggerCpuMove();
+    }
+
+    /** If it's the CPU opponent's turn in vs-CPU mode, computes and plays its move after a short "thinking" delay. */
+    private void maybeTriggerCpuMove() {
+        if (!vsCpu || gameOver || turn != opponentSymbol || root == null) return;
+        root.postDelayed(() -> {
+            if (isFinishing() || isDestroyed() || !vsCpu || gameOver || turn != opponentSymbol) return;
+            int cell = GameAI.bestMove(board, opponentSymbol, mySymbol);
+            if (cell < 0) return;
+            if (opponentSymbol == 'X') sounds.moveX(); else sounds.moveO();
+            applyMove(cell, opponentSymbol);
+        }, 550);
     }
 
     private void broadcastState() {
@@ -717,6 +749,7 @@ public class MainActivity extends Activity {
         Log.i(TAG, "startRematch mySymbol=" + mySymbol);
         send(msg);
         showGame();
+        maybeTriggerCpuMove();
     }
 
     private void showEndDialogAfterDelay() {
@@ -989,6 +1022,7 @@ public class MainActivity extends Activity {
     private void resetSession() {
         endpointId = null;
         host = false;
+        vsCpu = false;
         connected = false;
         nicknameSent = false;
         myNickname = "";
