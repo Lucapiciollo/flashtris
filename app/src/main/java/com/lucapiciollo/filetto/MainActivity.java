@@ -1,18 +1,23 @@
 package com.lucapiciollo.filetto;
 
 import android.Manifest;
+import android.animation.Animator;
 import android.app.Activity;
 import android.app.AlertDialog;
 import android.content.pm.PackageManager;
 import android.graphics.Color;
 import android.graphics.Typeface;
+import android.graphics.drawable.GradientDrawable;
 import android.os.Build;
 import android.os.Bundle;
 import android.text.InputType;
+import android.util.Log;
 import android.view.Gravity;
 import android.view.View;
+import android.view.Window;
 import android.widget.Button;
 import android.widget.EditText;
+import android.widget.FrameLayout;
 import android.widget.GridLayout;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
@@ -43,14 +48,22 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Random;
 
+/**
+ * Single-activity FlashTris: Nearby Connections P2P tic-tac-toe with a
+ * fully programmatic "gamer neon" UI (see {@link GameTheme}, {@link GameSounds},
+ * {@link GameAnimations}). All multiplayer logic/protocol is unchanged from
+ * the original implementation; only the screen-building/UI layer was redesigned.
+ */
 public class MainActivity extends Activity {
 
+    private static final String TAG = "FlashTris";
     private static final String SERVICE_ID = "com.lucapiciollo.filetto.nearby";
     private static final Strategy STRATEGY = Strategy.P2P_POINT_TO_POINT;
     private static final int REQ_PERMISSIONS = 900;
 
     private final Random random = new Random();
     private ConnectionsClient connectionsClient;
+    private GameSounds sounds;
     private String endpointId;
     private boolean host;
     private boolean connected;
@@ -61,67 +74,204 @@ public class MainActivity extends Activity {
     private char opponentSymbol = ' ';
     private char turn = 'X';
     private boolean gameOver;
+    private boolean awaitingMoveResult;
+    private int lastMoveCell = -1;
     private final char[] board = new char[9];
 
     private LinearLayout root;
     private TextView statusText;
     private TextView titleText;
     private final List<Button> cellButtons = new ArrayList<>();
+    private Animator activeAmbientAnimator;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        Log.i(TAG, "onCreate");
         connectionsClient = Nearby.getConnectionsClient(this);
+        sounds = new GameSounds(this);
         showHome();
     }
 
     @Override
     protected void onDestroy() {
         super.onDestroy();
+        Log.i(TAG, "onDestroy");
         stopEverything();
+        GameAnimations.stop(activeAmbientAnimator);
+        if (sounds != null) sounds.release();
     }
 
     private void showHome() {
+        stopAmbientAnimator();
         stopEverything();
         resetSession();
         root = baseRoot();
-        titleText = title("FLASH TRIS");
+
+        LinearLayout topBar = new LinearLayout(this);
+        topBar.setOrientation(LinearLayout.HORIZONTAL);
+        topBar.setGravity(Gravity.CENTER_VERTICAL);
+        View spacer = new View(this);
+        topBar.addView(spacer, weighted());
+        Button settingsBtn = iconButton("⚙");
+        settingsBtn.setOnClickListener(v -> {
+            sounds.tap();
+            showSettingsScreen();
+        });
+        topBar.addView(settingsBtn);
+        root.addView(topBar, matchWrap(0));
+
+        root.addView(neonDivider());
+        titleText = title("FLASHTRIS");
+        titleText.setTextSize(40);
         root.addView(titleText);
-        root.addView(subtitle("Due telefoni. Zero account. Una partita al volo."));
-        root.addView(space(24));
+        TextView payoff = subtitle("GIOCA  •  SFIDA  •  CONNETTITI");
+        payoff.setTextColor(GameTheme.CYAN);
+        payoff.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        payoff.setTextSize(13);
+        root.addView(payoff);
+        root.addView(neonDivider());
+        root.addView(space(10));
+
+        root.addView(miniGridPreview());
+        root.addView(space(22));
 
         Button create = primaryButton("CREA PARTITA");
         create.setOnClickListener(v -> {
+            sounds.tap();
             host = true;
             if (ensurePermissions()) startAdvertising();
         });
         root.addView(create);
+        root.addView(space(12));
 
         Button find = secondaryButton("TROVA PARTITA");
         find.setOnClickListener(v -> {
+            sounds.tap();
             host = false;
             if (ensurePermissions()) startDiscovery();
         });
         root.addView(find);
-
         root.addView(space(18));
-        root.addView(caption("La connessione è locale tramite Nearby Connections. Nessun backend e nessuna registrazione."));
-        setContentView(wrap(root));
+
+        LinearLayout audioRow = new LinearLayout(this);
+        audioRow.setOrientation(LinearLayout.HORIZONTAL);
+        audioRow.setGravity(Gravity.CENTER);
+        TextView audioLabel = caption("Audio");
+        audioLabel.setPadding(0, 0, dp(10), 0);
+        audioRow.addView(audioLabel);
+        Button audioToggle = soundToggleButton();
+        audioRow.addView(audioToggle);
+        root.addView(audioRow, matchWrap(0));
+
+        root.addView(space(16));
+        root.addView(caption("Connessione locale via Nearby Connections. Nessun backend, nessuna registrazione."));
+        renderScreen(root);
+    }
+
+    /** Small static, non-interactive tic-tac-toe grid used as a decorative preview on the Home screen. */
+    private View miniGridPreview() {
+        FrameLayout card = new FrameLayout(this);
+        card.setBackground(GameTheme.glowPanel(GameTheme.BG_PANEL, GameTheme.VIOLET, dp(18), dp(2), dp(6)));
+        int pad = dp(14);
+        card.setPadding(pad, pad, pad, pad);
+
+        GridLayout grid = new GridLayout(this);
+        grid.setColumnCount(3);
+        grid.setRowCount(3);
+        char[] preview = {'X', 'O', 'X', 'O', 'X', 'O', 'X', 'O', 'X'};
+        for (int i = 0; i < 9; i++) {
+            TextView cell = new TextView(this);
+            cell.setText(String.valueOf(preview[i]));
+            cell.setGravity(Gravity.CENTER);
+            cell.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+            cell.setTextSize(20);
+            cell.setTextColor(preview[i] == 'X' ? GameTheme.SYMBOL_X : GameTheme.SYMBOL_O);
+            cell.setBackground(GameTheme.roundedFill(GameTheme.BG_CELL, dp(8)));
+            GridLayout.LayoutParams lp = new GridLayout.LayoutParams();
+            lp.width = dp(46);
+            lp.height = dp(46);
+            lp.columnSpec = GridLayout.spec(i % 3, 1f);
+            lp.rowSpec = GridLayout.spec(i / 3, 1f);
+            lp.setMargins(dp(3), dp(3), dp(3), dp(3));
+            grid.addView(cell, lp);
+        }
+        card.addView(grid, new FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.CENTER));
+        FrameLayout wrapper = new FrameLayout(this);
+        wrapper.addView(card, new FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.CENTER));
+        return wrapper;
+    }
+
+    private Button soundToggleButton() {
+        Button b = new Button(this);
+        b.setAllCaps(false);
+        b.setTextSize(13);
+        b.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        b.setMinHeight(dp(38));
+        b.setPadding(dp(18), 0, dp(18), 0);
+        b.setLayoutParams(new LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT));
+        GameAnimations.pressFeedback(b);
+        updateSoundToggleLabel(b);
+        b.setOnClickListener(v -> {
+            boolean enable = !sounds.isSoundEnabled();
+            sounds.setSoundEnabled(enable);
+            if (enable) sounds.tap();
+            updateSoundToggleLabel(b);
+        });
+        return b;
+    }
+
+    private void updateSoundToggleLabel(Button b) {
+        boolean on = sounds.isSoundEnabled();
+        b.setText(on ? "🔊 ON" : "🔇 OFF");
+        b.setTextColor(on ? GameTheme.BG_NIGHT : GameTheme.TEXT_SECONDARY);
+        b.setBackground(GameTheme.withRipple(
+                on ? GameTheme.roundedFill(GameTheme.LIME, dp(19)) : GameTheme.roundedStroke(GameTheme.BG_PANEL_LIGHT, GameTheme.TEXT_MUTED, dp(19), dp(2)),
+                on ? GameTheme.BG_NIGHT : GameTheme.CYAN));
+    }
+
+    private View neonDivider() {
+        View v = new View(this);
+        GradientDrawable gd = new GradientDrawable(GradientDrawable.Orientation.LEFT_RIGHT,
+                new int[]{Color.TRANSPARENT, GameTheme.CYAN, GameTheme.MAGENTA, Color.TRANSPARENT});
+        v.setBackground(gd);
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(2));
+        lp.setMargins(0, dp(10), 0, dp(10));
+        v.setLayoutParams(lp);
+        return v;
     }
 
     private void startAdvertising() {
         showWaiting("Partita creata", "Sto aspettando un amico vicino…");
         String endpointName = "FlashTris-" + String.format(Locale.ITALY, "%04d", random.nextInt(10000));
         AdvertisingOptions options = new AdvertisingOptions.Builder().setStrategy(STRATEGY).build();
-        connectionsClient.startAdvertising(endpointName, SERVICE_ID, lifecycleCallback, options)
-                .addOnFailureListener(e -> fail("Impossibile creare la partita: " + e.getMessage()));
+        try {
+            Log.i(TAG, "startAdvertising as " + endpointName);
+            connectionsClient.startAdvertising(endpointName, SERVICE_ID, lifecycleCallback, options)
+                    .addOnFailureListener(e -> {
+                        Log.e(TAG, "startAdvertising failed", e);
+                        fail("Impossibile creare la partita: " + e.getMessage());
+                    });
+        } catch (SecurityException e) {
+            Log.e(TAG, "startAdvertising missing permission", e);
+            fail("Permessi mancanti per creare la partita.");
+        }
     }
 
     private void startDiscovery() {
         showWaiting("Cerco partite", "Tieni aperta l'app dell'amico che ha creato la partita.");
         DiscoveryOptions options = new DiscoveryOptions.Builder().setStrategy(STRATEGY).build();
-        connectionsClient.startDiscovery(SERVICE_ID, discoveryCallback, options)
-                .addOnFailureListener(e -> fail("Ricerca non disponibile: " + e.getMessage()));
+        try {
+            Log.i(TAG, "startDiscovery");
+            connectionsClient.startDiscovery(SERVICE_ID, discoveryCallback, options)
+                    .addOnFailureListener(e -> {
+                        Log.e(TAG, "startDiscovery failed", e);
+                        fail("Ricerca non disponibile: " + e.getMessage());
+                    });
+        } catch (SecurityException e) {
+            Log.e(TAG, "startDiscovery missing permission", e);
+            fail("Permessi mancanti per cercare partite.");
+        }
     }
 
     private final EndpointDiscoveryCallback discoveryCallback = new EndpointDiscoveryCallback() {
@@ -129,17 +279,26 @@ public class MainActivity extends Activity {
         public void onEndpointFound(String id, DiscoveredEndpointInfo info) {
             if (connected || endpointId != null) return;
             endpointId = id;
+            Log.i(TAG, "onEndpointFound " + id + " (" + info.getEndpointName() + ")");
             if (statusText != null) statusText.setText("Partita trovata: " + info.getEndpointName() + "\nConnessione…");
-            connectionsClient.stopDiscovery();
-            connectionsClient.requestConnection("Giocatore", id, lifecycleCallback)
-                    .addOnFailureListener(e -> {
-                        endpointId = null;
-                        fail("Connessione fallita: " + e.getMessage());
-                    });
+            try {
+                connectionsClient.stopDiscovery();
+                connectionsClient.requestConnection("Giocatore", id, lifecycleCallback)
+                        .addOnFailureListener(e -> {
+                            Log.e(TAG, "requestConnection failed", e);
+                            endpointId = null;
+                            fail("Connessione fallita: " + e.getMessage());
+                        });
+            } catch (SecurityException e) {
+                Log.e(TAG, "requestConnection missing permission", e);
+                endpointId = null;
+                fail("Permessi mancanti per connettersi.");
+            }
         }
 
         @Override
         public void onEndpointLost(String id) {
+            Log.w(TAG, "onEndpointLost " + id);
             if (id.equals(endpointId) && !connected) endpointId = null;
         }
     };
@@ -147,19 +306,32 @@ public class MainActivity extends Activity {
     private final ConnectionLifecycleCallback lifecycleCallback = new ConnectionLifecycleCallback() {
         @Override
         public void onConnectionInitiated(String id, ConnectionInfo info) {
+            Log.i(TAG, "onConnectionInitiated " + id);
             endpointId = id;
-            connectionsClient.acceptConnection(id, payloadCallback);
+            try {
+                connectionsClient.acceptConnection(id, payloadCallback);
+            } catch (SecurityException e) {
+                Log.e(TAG, "acceptConnection missing permission", e);
+                runOnUiThread(() -> fail("Permessi mancanti per accettare la connessione."));
+            }
         }
 
         @Override
         public void onConnectionResult(String id, ConnectionResolution result) {
             if (result.getStatus().isSuccess()) {
+                Log.i(TAG, "onConnectionResult success " + id);
                 connected = true;
                 endpointId = id;
-                connectionsClient.stopAdvertising();
-                connectionsClient.stopDiscovery();
-                runOnUiThread(MainActivity.this::showNicknameScreen);
+                stopDiscoverySafely();
+                stopAdvertisingSafely();
+                runOnUiThread(() -> {
+                    if (!isFinishing() && !isDestroyed()) {
+                        sounds.connected();
+                        showNicknameScreen();
+                    }
+                });
             } else {
+                Log.w(TAG, "onConnectionResult failed " + id + " status=" + result.getStatus());
                 endpointId = null;
                 connected = false;
                 runOnUiThread(() -> fail("Connessione rifiutata o non riuscita."));
@@ -168,13 +340,13 @@ public class MainActivity extends Activity {
 
         @Override
         public void onDisconnected(String id) {
+            Log.w(TAG, "onDisconnected " + id);
             connected = false;
-            runOnUiThread(() -> new AlertDialog.Builder(MainActivity.this)
-                    .setTitle("Amico disconnesso")
-                    .setMessage("La partita è terminata.")
-                    .setCancelable(false)
-                    .setPositiveButton("TORNA ALLA HOME", (d, w) -> showHome())
-                    .show());
+            runOnUiThread(() -> {
+                if (isFinishing() || isDestroyed()) return;
+                styledDialog("AMICO DISCONNESSO", "La partita è terminata.", false,
+                        "TORNA ALLA HOME", (d, w) -> showHome(), null, null).show();
+            });
         }
     };
 
@@ -183,42 +355,71 @@ public class MainActivity extends Activity {
         public void onPayloadReceived(String id, Payload payload) {
             if (payload.getType() != Payload.Type.BYTES || payload.asBytes() == null) return;
             String raw = new String(payload.asBytes(), StandardCharsets.UTF_8);
-            runOnUiThread(() -> handleMessage(raw));
+            Log.d(TAG, "onPayloadReceived " + raw);
+            runOnUiThread(() -> {
+                if (!isFinishing() && !isDestroyed()) handleMessage(raw);
+            });
         }
 
         @Override
         public void onPayloadTransferUpdate(String id, PayloadTransferUpdate update) { }
     };
 
+    private void stopDiscoverySafely() {
+        try { connectionsClient.stopDiscovery(); } catch (Exception e) { Log.w(TAG, "stopDiscovery failed", e); }
+    }
+
+    private void stopAdvertisingSafely() {
+        try { connectionsClient.stopAdvertising(); } catch (Exception e) { Log.w(TAG, "stopAdvertising failed", e); }
+    }
+
     private void showNicknameScreen() {
+        stopAmbientAnimator();
         root = baseRoot();
-        root.addView(title("CONNESSI ✓"));
-        root.addView(subtitle("Ora scegli il nome da mostrare solo per questa partita."));
+        root.addView(title("SEI DENTRO ✓"));
+        root.addView(subtitle("Scegli il nome da mostrare solo per questa partita."));
         root.addView(space(22));
 
         EditText input = new EditText(this);
         input.setHint("Il tuo nickname");
+        input.setHintTextColor(GameTheme.TEXT_MUTED);
+        input.setTextColor(GameTheme.TEXT_PRIMARY);
         input.setSingleLine(true);
         input.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);
         input.setTextSize(18);
         input.setPadding(dp(18), dp(14), dp(18), dp(14));
+        input.setBackground(GameTheme.roundedStroke(GameTheme.BG_PANEL, GameTheme.CYAN, dp(14), dp(2)));
         root.addView(input, matchWrap(0));
+
+        TextView errorText = caption("");
+        errorText.setTextColor(GameTheme.DANGER);
+        errorText.setVisibility(View.GONE);
+        root.addView(errorText, matchWrap(dp(4)));
+
+        root.addView(caption("Vale solo per questa partita: non viene salvato né condiviso altrove."));
+        root.addView(space(10));
 
         Button continueBtn = primaryButton("CONTINUA");
         continueBtn.setOnClickListener(v -> {
+            sounds.tap();
             String name = input.getText().toString().trim();
             if (name.isEmpty()) {
-                input.setError("Inserisci un nickname");
+                errorText.setText("Inserisci un nickname per continuare");
+                errorText.setVisibility(View.VISIBLE);
                 return;
             }
+            errorText.setVisibility(View.GONE);
             myNickname = name.length() > 18 ? name.substring(0, 18) : name;
             nicknameSent = true;
-            send(message("NICKNAME").putOpt("name", myNickname));
+            JSONObject nicknameMsg = message("NICKNAME");
+            try { nicknameMsg.put("name", myNickname); } catch (JSONException ignored) { }
+            Log.i(TAG, "Sending nickname");
+            send(nicknameMsg);
             showWaiting("Perfetto, " + myNickname, "Aspetto il nickname del tuo amico…");
             maybeProceedAfterNicknames();
         });
         root.addView(continueBtn);
-        setContentView(wrap(root));
+        renderScreen(root);
     }
 
     private void maybeProceedAfterNicknames() {
@@ -228,6 +429,7 @@ public class MainActivity extends Activity {
     }
 
     private void showSymbolChoice() {
+        stopAmbientAnimator();
         root = baseRoot();
         root.addView(title("SCEGLI IL SIMBOLO"));
         root.addView(subtitle("Tu scegli. " + opponentNickname + " riceverà automaticamente l'altro simbolo."));
@@ -236,16 +438,42 @@ public class MainActivity extends Activity {
         LinearLayout row = new LinearLayout(this);
         row.setOrientation(LinearLayout.HORIZONTAL);
         row.setGravity(Gravity.CENTER);
-        Button x = symbolButton("X");
-        Button o = symbolButton("O");
+        View x = symbolCard('X', GameTheme.SYMBOL_X);
+        View o = symbolCard('O', GameTheme.SYMBOL_O);
         row.addView(x, weighted());
-        row.addView(spaceHorizontal(12));
+        row.addView(spaceHorizontal(14));
         row.addView(o, weighted());
         root.addView(row, matchWrap(0));
 
-        x.setOnClickListener(v -> selectHostSymbol('X'));
-        o.setOnClickListener(v -> selectHostSymbol('O'));
-        setContentView(wrap(root));
+        x.setOnClickListener(v -> {
+            sounds.tap();
+            GameAnimations.celebrate(v);
+            v.postDelayed(() -> selectHostSymbol('X'), 180);
+        });
+        o.setOnClickListener(v -> {
+            sounds.tap();
+            GameAnimations.celebrate(v);
+            v.postDelayed(() -> selectHostSymbol('O'), 180);
+        });
+        renderScreen(root);
+    }
+
+    /** Big glowing selectable card used on the symbol-choice screen. */
+    private View symbolCard(char symbol, int accentColor) {
+        FrameLayout card = new FrameLayout(this);
+        card.setBackground(GameTheme.glowPanel(GameTheme.BG_PANEL, accentColor, dp(20), dp(3), dp(8)));
+        card.setClickable(true);
+        card.setFocusable(true);
+        GameAnimations.pressFeedback(card);
+        TextView letter = new TextView(this);
+        letter.setText(String.valueOf(symbol));
+        letter.setTextSize(56);
+        letter.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        letter.setTextColor(accentColor);
+        letter.setGravity(Gravity.CENTER);
+        card.addView(letter, new FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.CENTER));
+        card.setLayoutParams(new LinearLayout.LayoutParams(0, dp(140), 1f));
+        return card;
     }
 
     private void selectHostSymbol(char symbol) {
@@ -253,6 +481,7 @@ public class MainActivity extends Activity {
         opponentSymbol = symbol == 'X' ? 'O' : 'X';
         turn = 'X';
         gameOver = false;
+        lastMoveCell = -1;
         clearBoard();
         JSONObject msg = message("START");
         try {
@@ -265,19 +494,26 @@ public class MainActivity extends Activity {
     }
 
     private void showGame() {
+        stopAmbientAnimator();
         root = baseRoot();
-        root.addView(title("FLASH TRIS"));
-        TextView players = subtitle(myNickname + "  " + mySymbol + "    •    " + opponentSymbol + "  " + opponentNickname);
-        players.setGravity(Gravity.CENTER);
-        root.addView(players);
-        root.addView(space(18));
+
+        LinearLayout header = new LinearLayout(this);
+        header.setOrientation(LinearLayout.HORIZONTAL);
+        header.setGravity(Gravity.CENTER_VERTICAL);
+        header.addView(playerChip(myNickname, mySymbol, true), weighted());
+        Button audioToggle = soundToggleButton();
+        header.addView(audioToggle);
+        header.addView(playerChip(opponentNickname, opponentSymbol, false), weighted());
+        root.addView(header, matchWrap(0));
+        root.addView(space(14));
 
         statusText = new TextView(this);
         statusText.setTextSize(19);
         statusText.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
         statusText.setGravity(Gravity.CENTER);
-        statusText.setTextColor(Color.rgb(35, 39, 55));
-        root.addView(statusText, matchWrap(dp(14)));
+        statusText.setTextColor(GameTheme.TEXT_PRIMARY);
+        root.addView(statusText, matchWrap(dp(6)));
+        root.addView(space(16));
 
         GridLayout grid = new GridLayout(this);
         grid.setColumnCount(3);
@@ -291,7 +527,8 @@ public class MainActivity extends Activity {
             b.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
             b.setAllCaps(false);
             b.setMinHeight(dp(94));
-            b.setBackgroundColor(Color.WHITE);
+            b.setBackground(GameTheme.withRipple(GameTheme.roundedStroke(GameTheme.BG_CELL, GameTheme.BG_PANEL_LIGHT, dp(12), dp(2)), GameTheme.CYAN));
+            GameAnimations.pressFeedback(b);
             b.setOnClickListener(v -> onCellPressed(cell));
             GridLayout.LayoutParams lp = new GridLayout.LayoutParams();
             lp.width = 0;
@@ -303,35 +540,69 @@ public class MainActivity extends Activity {
             cellButtons.add(b);
         }
         root.addView(grid, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(330)));
+        root.addView(space(18));
 
-        Button leave = secondaryButton("ESCI DALLA PARTITA");
+        Button leave = dangerButton("ESCI DALLA PARTITA");
         leave.setOnClickListener(v -> {
+            sounds.tap();
             send(message("LEAVE"));
             showHome();
         });
         root.addView(leave);
-        setContentView(wrap(root));
+        renderScreen(root);
         renderBoard();
     }
 
+    /** Compact nickname + symbol chip shown in the gameplay header. */
+    private View playerChip(String nickname, char symbol, boolean mine) {
+        LinearLayout chip = new LinearLayout(this);
+        chip.setOrientation(LinearLayout.VERTICAL);
+        chip.setGravity(Gravity.CENTER);
+        int accent = symbol == 'X' ? GameTheme.SYMBOL_X : GameTheme.SYMBOL_O;
+        TextView name = new TextView(this);
+        name.setText(nickname.isEmpty() ? (mine ? "Tu" : "Avversario") : nickname);
+        name.setTextSize(13);
+        name.setTextColor(GameTheme.TEXT_SECONDARY);
+        name.setGravity(Gravity.CENTER);
+        name.setSingleLine(true);
+        chip.addView(name);
+        TextView symbolView = new TextView(this);
+        symbolView.setText(String.valueOf(symbol));
+        symbolView.setTextSize(26);
+        symbolView.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        symbolView.setTextColor(accent);
+        symbolView.setGravity(Gravity.CENTER);
+        chip.addView(symbolView);
+        return chip;
+    }
+
     private void onCellPressed(int cell) {
-        if (gameOver || board[cell] != ' ' || turn != mySymbol) return;
+        if (gameOver || board[cell] != ' ' || turn != mySymbol || awaitingMoveResult) return;
+        if (mySymbol == 'X') sounds.moveX(); else sounds.moveO();
         if (host) {
             applyMove(cell, mySymbol);
         } else {
+            awaitingMoveResult = true;
+            renderBoard();
             JSONObject msg = message("MOVE_REQUEST");
             try { msg.put("cell", cell); } catch (JSONException ignored) { }
+            Log.d(TAG, "Sending MOVE_REQUEST cell=" + cell);
             send(msg);
         }
     }
 
     private void applyMove(int cell, char symbol) {
-        if (!host || gameOver || cell < 0 || cell > 8 || board[cell] != ' ' || turn != symbol) return;
+        if (!host || gameOver || cell < 0 || cell > 8 || board[cell] != ' ' || turn != symbol) {
+            Log.w(TAG, "applyMove rejected cell=" + cell + " symbol=" + symbol);
+            return;
+        }
         board[cell] = symbol;
+        lastMoveCell = cell;
         char winner = winner();
         if (winner != ' ') gameOver = true;
         else if (isDraw()) gameOver = true;
         else turn = turn == 'X' ? 'O' : 'X';
+        Log.d(TAG, "applyMove cell=" + cell + " symbol=" + symbol + " gameOver=" + gameOver);
         broadcastState();
         renderBoard();
         if (gameOver) showEndDialogAfterDelay();
@@ -354,6 +625,7 @@ public class MainActivity extends Activity {
         try {
             JSONObject msg = new JSONObject(raw);
             String type = msg.optString("type");
+            Log.d(TAG, "handleMessage type=" + type);
             switch (type) {
                 case "NICKNAME":
                     opponentNickname = msg.optString("name", "Amico");
@@ -365,6 +637,8 @@ public class MainActivity extends Activity {
                         opponentSymbol = mySymbol == 'X' ? 'O' : 'X';
                         turn = 'X';
                         gameOver = false;
+                        awaitingMoveResult = false;
+                        lastMoveCell = -1;
                         clearBoard();
                         showGame();
                     }
@@ -375,24 +649,29 @@ public class MainActivity extends Activity {
                 case "STATE":
                     if (!host) {
                         JSONArray arr = msg.getJSONArray("board");
+                        int changedCell = -1;
                         for (int i = 0; i < 9; i++) {
                             String v = arr.optString(i, "");
-                            board[i] = v.isEmpty() ? ' ' : v.charAt(0);
+                            char newValue = v.isEmpty() ? ' ' : v.charAt(0);
+                            if (newValue != board[i] && newValue != ' ') changedCell = i;
+                            board[i] = newValue;
+                        }
+                        if (changedCell != -1) {
+                            lastMoveCell = changedCell;
+                            if (board[changedCell] == 'X') sounds.moveX(); else sounds.moveO();
                         }
                         String t = msg.optString("turn", "X");
                         turn = t.isEmpty() ? 'X' : t.charAt(0);
                         gameOver = msg.optBoolean("gameOver", false);
+                        awaitingMoveResult = false;
                         renderBoard();
                         if (gameOver) showEndDialogAfterDelay();
                     }
                     break;
                 case "REMATCH_REQUEST":
-                    if (host) {
-                        new AlertDialog.Builder(this)
-                                .setTitle(opponentNickname + " vuole la rivincita")
-                                .setPositiveButton("ACCETTA", (d, w) -> startRematch())
-                                .setNegativeButton("NO", null)
-                                .show();
+                    if (host && !isFinishing() && !isDestroyed()) {
+                        styledDialog(opponentNickname.toUpperCase(Locale.ITALY) + " VUOLE LA RIVINCITA", "Accetti una nuova partita?", true,
+                                "ACCETTA", (d, w) -> startRematch(), "NO", null).show();
                     }
                     break;
                 case "REMATCH_START":
@@ -403,18 +682,19 @@ public class MainActivity extends Activity {
                         clearBoard();
                         turn = 'X';
                         gameOver = false;
+                        awaitingMoveResult = false;
+                        lastMoveCell = -1;
                         showGame();
                     }
                     break;
                 case "LEAVE":
-                    new AlertDialog.Builder(this)
-                            .setTitle("Partita terminata")
-                            .setMessage(opponentNickname + " è uscito dalla partita.")
-                            .setPositiveButton("HOME", (d, w) -> showHome())
-                            .show();
+                    if (isFinishing() || isDestroyed()) break;
+                    styledDialog("PARTITA TERMINATA", opponentNickname + " è uscito dalla partita.", false,
+                            "HOME", (d, w) -> showHome(), null, null).show();
                     break;
             }
         } catch (Exception e) {
+            Log.e(TAG, "handleMessage failed to parse payload", e);
             Toast.makeText(this, "Messaggio non valido", Toast.LENGTH_SHORT).show();
         }
     }
@@ -427,8 +707,11 @@ public class MainActivity extends Activity {
         clearBoard();
         turn = 'X';
         gameOver = false;
+        awaitingMoveResult = false;
+        lastMoveCell = -1;
         JSONObject msg = message("REMATCH_START");
         try { msg.put("guestSymbol", String.valueOf(opponentSymbol)); } catch (JSONException ignored) { }
+        Log.i(TAG, "startRematch mySymbol=" + mySymbol);
         send(msg);
         showGame();
     }
@@ -436,49 +719,145 @@ public class MainActivity extends Activity {
     private void showEndDialogAfterDelay() {
         if (root == null) return;
         root.postDelayed(() -> {
-            char w = winner();
-            String text;
-            if (w == ' ') text = "Pareggio!";
-            else if (w == mySymbol) text = "Hai vinto! 🎉";
-            else text = opponentNickname + " ha vinto.";
+            if (isFinishing() || isDestroyed()) return;
+            showResultScreen();
+        }, 250);
+    }
 
-            AlertDialog.Builder dialog = new AlertDialog.Builder(this)
-                    .setTitle(text)
-                    .setNegativeButton("ESCI", (d, which) -> showHome());
-            if (host) dialog.setPositiveButton("RIVINCITA", (d, which) -> startRematch());
-            else dialog.setPositiveButton("CHIEDI RIVINCITA", (d, which) -> {
+    /** Full-screen result view shown at the end of a match, replacing the old AlertDialog. */
+    private void showResultScreen() {
+        stopAmbientAnimator();
+        char w = winner();
+        boolean iWon = w != ' ' && w == mySymbol;
+        boolean draw = w == ' ';
+        String headline = draw ? "PAREGGIO" : (iWon ? "HAI VINTO!" : "HAI PERSO");
+        int accent = draw ? GameTheme.VIOLET : (iWon ? GameTheme.LIME : GameTheme.DANGER);
+        if (draw) sounds.draw(); else if (iWon) sounds.win(); else sounds.lose();
+
+        root = baseRoot();
+        TextView headlineView = title(headline);
+        headlineView.setTextColor(accent);
+        headlineView.setTextSize(38);
+        root.addView(headlineView);
+        root.addView(space(6));
+        root.addView(caption(draw ? "Nessun vincitore questa volta." : (iWon ? "Ottima partita, " + myNickname + "!" : opponentNickname + " se l'è cavata meglio.")));
+        root.addView(space(20));
+
+        int[] winLine = winningLineCells();
+        FrameLayout boardCard = new FrameLayout(this);
+        boardCard.setBackground(GameTheme.glowPanel(GameTheme.BG_PANEL, accent, dp(18), dp(2), dp(6)));
+        int pad = dp(14);
+        boardCard.setPadding(pad, pad, pad, pad);
+        GridLayout grid = new GridLayout(this);
+        grid.setColumnCount(3);
+        grid.setRowCount(3);
+        for (int i = 0; i < 9; i++) {
+            boolean onLine = winLine != null && (i == winLine[0] || i == winLine[1] || i == winLine[2]);
+            TextView cell = new TextView(this);
+            char c = board[i];
+            cell.setText(c == ' ' ? "" : String.valueOf(c));
+            cell.setGravity(Gravity.CENTER);
+            cell.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+            cell.setTextSize(24);
+            cell.setTextColor(c == 'X' ? GameTheme.SYMBOL_X : GameTheme.SYMBOL_O);
+            cell.setBackground(onLine
+                    ? GameTheme.roundedStroke(GameTheme.BG_CELL, GameTheme.LIME, dp(8), dp(2))
+                    : GameTheme.roundedFill(GameTheme.BG_CELL, dp(8)));
+            GridLayout.LayoutParams lp = new GridLayout.LayoutParams();
+            lp.width = dp(58);
+            lp.height = dp(58);
+            lp.columnSpec = GridLayout.spec(i % 3, 1f);
+            lp.rowSpec = GridLayout.spec(i / 3, 1f);
+            lp.setMargins(dp(3), dp(3), dp(3), dp(3));
+            grid.addView(cell, lp);
+            if (onLine) GameAnimations.celebrate(cell);
+        }
+        boardCard.addView(grid, new FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.CENTER));
+        FrameLayout boardWrapper = new FrameLayout(this);
+        boardWrapper.addView(boardCard, new FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.CENTER));
+        root.addView(boardWrapper, matchWrap(0));
+        root.addView(space(24));
+
+        if (host) {
+            Button rematch = primaryButton("RIVINCITA");
+            rematch.setOnClickListener(v -> {
+                sounds.tap();
+                startRematch();
+            });
+            root.addView(rematch);
+        } else {
+            Button askRematch = primaryButton("CHIEDI RIVINCITA");
+            askRematch.setOnClickListener(v -> {
+                sounds.tap();
                 send(message("REMATCH_REQUEST"));
+                askRematch.setEnabled(false);
+                askRematch.setText("RICHIESTA INVIATA…");
                 Toast.makeText(this, "Richiesta inviata", Toast.LENGTH_SHORT).show();
             });
-            dialog.show();
-        }, 250);
+            root.addView(askRematch);
+        }
+        root.addView(space(12));
+        Button newHome = secondaryButton("NUOVA HOME");
+        newHome.setOnClickListener(v -> {
+            sounds.tap();
+            showHome();
+        });
+        root.addView(newHome);
+
+        renderScreen(root);
+        if (iWon) GameAnimations.celebrate(headlineView);
+    }
+
+    private static final int[][] WIN_LINES = {
+            {0, 1, 2}, {3, 4, 5}, {6, 7, 8},
+            {0, 3, 6}, {1, 4, 7}, {2, 5, 8},
+            {0, 4, 8}, {2, 4, 6}
+    };
+
+    private int[] winningLineCells() {
+        for (int[] l : WIN_LINES) {
+            if (board[l[0]] != ' ' && board[l[0]] == board[l[1]] && board[l[1]] == board[l[2]]) return l;
+        }
+        return null;
     }
 
     private void renderBoard() {
         if (cellButtons.size() != 9 || statusText == null) return;
+        int[] winLine = gameOver ? winningLineCells() : null;
         for (int i = 0; i < 9; i++) {
             char c = board[i];
-            cellButtons.get(i).setText(c == ' ' ? "" : String.valueOf(c));
-            cellButtons.get(i).setEnabled(!gameOver && c == ' ' && turn == mySymbol);
+            Button b = cellButtons.get(i);
+            b.setText(c == ' ' ? "" : String.valueOf(c));
+            b.setTextColor(c == 'X' ? GameTheme.SYMBOL_X : (c == 'O' ? GameTheme.SYMBOL_O : GameTheme.TEXT_PRIMARY));
+            b.setEnabled(!gameOver && c == ' ' && turn == mySymbol && !awaitingMoveResult);
+            boolean onLine = winLine != null && (i == winLine[0] || i == winLine[1] || i == winLine[2]);
+            int borderColor = onLine ? GameTheme.LIME : (i == lastMoveCell ? GameTheme.CYAN : GameTheme.BG_PANEL_LIGHT);
+            b.setBackground(GameTheme.withRipple(GameTheme.roundedStroke(GameTheme.BG_CELL, borderColor, dp(12), dp(2)), GameTheme.CYAN));
+            if (i == lastMoveCell && c != ' ') GameAnimations.popIn(b);
         }
         if (gameOver) {
             char w = winner();
             if (w == ' ') statusText.setText("Pareggio");
             else statusText.setText(w == mySymbol ? "Hai vinto 🎉" : opponentNickname + " ha vinto");
+            GameAnimations.stop(activeAmbientAnimator);
+            activeAmbientAnimator = null;
+            statusText.setAlpha(1f);
         } else if (turn == mySymbol) {
             statusText.setText("Tocca a te • " + mySymbol);
+            statusText.setTextColor(GameTheme.LIME);
+            GameAnimations.stop(activeAmbientAnimator);
+            activeAmbientAnimator = GameAnimations.startAlphaPulse(statusText);
         } else {
             statusText.setText("Tocca a " + opponentNickname + " • " + opponentSymbol);
+            statusText.setTextColor(GameTheme.TEXT_SECONDARY);
+            GameAnimations.stop(activeAmbientAnimator);
+            activeAmbientAnimator = null;
+            statusText.setAlpha(1f);
         }
     }
 
     private char winner() {
-        int[][] lines = {
-                {0,1,2},{3,4,5},{6,7,8},
-                {0,3,6},{1,4,7},{2,5,8},
-                {0,4,8},{2,4,6}
-        };
-        for (int[] l : lines) {
+        for (int[] l : WIN_LINES) {
             if (board[l[0]] != ' ' && board[l[0]] == board[l[1]] && board[l[1]] == board[l[2]]) return board[l[0]];
         }
         return ' ';
@@ -491,22 +870,47 @@ public class MainActivity extends Activity {
     }
 
     private void showWaiting(String title, String status) {
+        stopAmbientAnimator();
         root = baseRoot();
         root.addView(title(title.toUpperCase(Locale.ITALY)));
         statusText = subtitle(status);
         statusText.setGravity(Gravity.CENTER);
         root.addView(statusText);
         root.addView(space(26));
-        TextView pulse = new TextView(this);
-        pulse.setText("◎");
-        pulse.setGravity(Gravity.CENTER);
-        pulse.setTextSize(72);
-        pulse.setTextColor(Color.rgb(91, 103, 241));
-        root.addView(pulse, matchWrap(dp(24)));
+        root.addView(radarView());
+        root.addView(space(10));
         Button cancel = secondaryButton("ANNULLA");
-        cancel.setOnClickListener(v -> showHome());
+        cancel.setOnClickListener(v -> {
+            sounds.tap();
+            showHome();
+        });
         root.addView(cancel);
-        setContentView(wrap(root));
+        renderScreen(root);
+    }
+
+    /** Simple, lightweight radar/scan decoration used on waiting/connecting screens (no custom Canvas work needed). */
+    private View radarView() {
+        FrameLayout container = new FrameLayout(this);
+        int size = dp(160);
+        container.setLayoutParams(new LinearLayout.LayoutParams(size, size));
+
+        View outerRing = new View(this);
+        outerRing.setBackground(GameTheme.ovalStroke(GameTheme.withAlpha(GameTheme.CYAN, 90), dp(2)));
+        container.addView(outerRing, new FrameLayout.LayoutParams(size, size, Gravity.CENTER));
+
+        View midRing = new View(this);
+        int midSize = dp(110);
+        midRing.setBackground(GameTheme.ovalStroke(GameTheme.withAlpha(GameTheme.CYAN, 150), dp(2)));
+        container.addView(midRing, new FrameLayout.LayoutParams(midSize, midSize, Gravity.CENTER));
+
+        View core = new View(this);
+        int coreSize = dp(56);
+        core.setBackground(GameTheme.ovalFill(GameTheme.VIOLET));
+        container.addView(core, new FrameLayout.LayoutParams(coreSize, coreSize, Gravity.CENTER));
+
+        GameAnimations.stop(activeAmbientAnimator);
+        activeAmbientAnimator = GameAnimations.startPulse(outerRing);
+        return container;
     }
 
     private boolean ensurePermissions() {
@@ -526,6 +930,7 @@ public class MainActivity extends Activity {
         List<String> missing = new ArrayList<>();
         for (String p : required) if (checkSelfPermission(p) != PackageManager.PERMISSION_GRANTED) missing.add(p);
         if (!missing.isEmpty()) {
+            Log.i(TAG, "Requesting missing permissions: " + missing);
             requestPermissions(missing.toArray(new String[0]), REQ_PERMISSIONS);
             return false;
         }
@@ -538,11 +943,13 @@ public class MainActivity extends Activity {
         if (requestCode != REQ_PERMISSIONS) return;
         for (int result : grantResults) {
             if (result != PackageManager.PERMISSION_GRANTED) {
+                Log.w(TAG, "Permission denied by user");
                 Toast.makeText(this, "Servono i permessi per trovare telefoni vicini.", Toast.LENGTH_LONG).show();
                 showHome();
                 return;
             }
         }
+        Log.i(TAG, "All permissions granted");
         if (host) startAdvertising(); else startDiscovery();
     }
 
@@ -555,16 +962,22 @@ public class MainActivity extends Activity {
     private void send(JSONObject message) {
         if (!connected || endpointId == null) return;
         byte[] bytes = message.toString().getBytes(StandardCharsets.UTF_8);
-        connectionsClient.sendPayload(endpointId, Payload.fromBytes(bytes));
+        try {
+            connectionsClient.sendPayload(endpointId, Payload.fromBytes(bytes));
+        } catch (Exception e) {
+            Log.e(TAG, "sendPayload failed", e);
+        }
     }
 
     private void fail(String message) {
+        Log.e(TAG, "fail: " + message);
         Toast.makeText(this, message, Toast.LENGTH_LONG).show();
         showHome();
     }
 
     private void stopEverything() {
         if (connectionsClient == null) return;
+        Log.i(TAG, "stopEverything");
         try { connectionsClient.stopAdvertising(); } catch (Exception ignored) { }
         try { connectionsClient.stopDiscovery(); } catch (Exception ignored) { }
         try { connectionsClient.stopAllEndpoints(); } catch (Exception ignored) { }
@@ -581,6 +994,7 @@ public class MainActivity extends Activity {
         opponentSymbol = ' ';
         turn = 'X';
         gameOver = false;
+        awaitingMoveResult = false;
         clearBoard();
     }
 
@@ -591,16 +1005,27 @@ public class MainActivity extends Activity {
     private ScrollView wrap(View view) {
         ScrollView s = new ScrollView(this);
         s.setFillViewport(true);
-        s.setBackgroundColor(Color.rgb(247, 248, 252));
+        s.setBackground(GameTheme.screenBackground());
         s.addView(view);
         return s;
+    }
+
+    /** Applies the screen content, resetting any leftover ambient animator and playing the entrance animation. */
+    private void renderScreen(LinearLayout content) {
+        setContentView(wrap(content));
+        GameAnimations.fadeSlideIn(content);
+    }
+
+    private void stopAmbientAnimator() {
+        GameAnimations.stop(activeAmbientAnimator);
+        activeAmbientAnimator = null;
     }
 
     private LinearLayout baseRoot() {
         LinearLayout l = new LinearLayout(this);
         l.setOrientation(LinearLayout.VERTICAL);
         l.setGravity(Gravity.CENTER_HORIZONTAL);
-        l.setPadding(dp(24), dp(40), dp(24), dp(30));
+        l.setPadding(dp(24), dp(32), dp(24), dp(30));
         return l;
     }
 
@@ -609,8 +1034,9 @@ public class MainActivity extends Activity {
         v.setText(t);
         v.setTextSize(34);
         v.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
-        v.setTextColor(Color.rgb(20, 23, 32));
+        v.setTextColor(GameTheme.TEXT_PRIMARY);
         v.setGravity(Gravity.CENTER);
+        v.setShadowLayer(dp(10), 0, 0, GameTheme.withAlpha(GameTheme.CYAN, 140));
         return v;
     }
 
@@ -618,7 +1044,7 @@ public class MainActivity extends Activity {
         TextView v = new TextView(this);
         v.setText(t);
         v.setTextSize(17);
-        v.setTextColor(Color.rgb(94, 99, 116));
+        v.setTextColor(GameTheme.TEXT_SECONDARY);
         v.setGravity(Gravity.CENTER_HORIZONTAL);
         v.setPadding(0, dp(10), 0, dp(10));
         return v;
@@ -627,39 +1053,167 @@ public class MainActivity extends Activity {
     private TextView caption(String t) {
         TextView v = subtitle(t);
         v.setTextSize(13);
+        v.setTextColor(GameTheme.TEXT_MUTED);
         return v;
     }
 
     private Button primaryButton(String text) {
         Button b = new Button(this);
         b.setText(text);
+        b.setAllCaps(false);
         b.setTextSize(17);
         b.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
-        b.setTextColor(Color.WHITE);
-        b.setBackgroundColor(Color.rgb(91, 103, 241));
+        b.setTextColor(GameTheme.BG_NIGHT);
+        b.setBackground(GameTheme.primaryButtonBackground(dp(16)));
         b.setMinHeight(dp(58));
-        LinearLayout.LayoutParams lp = matchWrap(dp(8));
-        b.setLayoutParams(lp);
+        b.setLayoutParams(matchWrap(dp(4)));
+        GameAnimations.pressFeedback(b);
         return b;
     }
 
     private Button secondaryButton(String text) {
         Button b = new Button(this);
         b.setText(text);
+        b.setAllCaps(false);
         b.setTextSize(16);
-        b.setTextColor(Color.rgb(50, 55, 73));
-        b.setBackgroundColor(Color.rgb(232, 234, 242));
+        b.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        b.setTextColor(GameTheme.CYAN);
+        b.setBackground(GameTheme.secondaryButtonBackground(dp(16)));
         b.setMinHeight(dp(54));
-        LinearLayout.LayoutParams lp = matchWrap(dp(8));
-        b.setLayoutParams(lp);
+        b.setLayoutParams(matchWrap(dp(4)));
+        GameAnimations.pressFeedback(b);
         return b;
     }
 
-    private Button symbolButton(String text) {
-        Button b = primaryButton(text);
-        b.setTextSize(44);
-        b.setMinHeight(dp(120));
+    private Button dangerButton(String text) {
+        Button b = new Button(this);
+        b.setText(text);
+        b.setAllCaps(false);
+        b.setTextSize(15);
+        b.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        b.setTextColor(GameTheme.DANGER);
+        b.setBackground(GameTheme.dangerButtonBackground(dp(16)));
+        b.setMinHeight(dp(48));
+        b.setLayoutParams(matchWrap(dp(4)));
+        GameAnimations.pressFeedback(b);
         return b;
+    }
+
+    /** Small square icon-only button (used for the settings gear on Home). */
+    private Button iconButton(String glyph) {
+        Button b = new Button(this);
+        b.setText(glyph);
+        b.setAllCaps(false);
+        b.setTextSize(18);
+        b.setTextColor(GameTheme.TEXT_PRIMARY);
+        b.setBackground(GameTheme.secondaryButtonBackground(dp(14)));
+        b.setMinWidth(dp(44));
+        b.setMinHeight(dp(44));
+        b.setPadding(0, 0, 0, 0);
+        GameAnimations.pressFeedback(b);
+        return b;
+    }
+
+    /**
+     * Minimal dark-theme reskin of the standard AlertDialog: a themed custom
+     * title, message body and tinted action buttons. Kept intentionally
+     * lightweight (no custom layout resource) since these dialogs are used
+     * only for short, transient decisions (rematch request, opponent left).
+     */
+    private AlertDialog styledDialog(String titleText, String message, boolean cancelable,
+                                      String positiveText, android.content.DialogInterface.OnClickListener positiveListener,
+                                      String negativeText, android.content.DialogInterface.OnClickListener negativeListener) {
+        AlertDialog.Builder builder = new AlertDialog.Builder(this);
+        TextView titleView = title(titleText);
+        titleView.setTextSize(19);
+        titleView.setPadding(dp(20), dp(20), dp(20), dp(6));
+        builder.setCustomTitle(titleView);
+        TextView messageView = subtitle(message);
+        messageView.setPadding(dp(20), 0, dp(20), dp(12));
+        builder.setView(messageView);
+        builder.setCancelable(cancelable);
+        builder.setPositiveButton(positiveText, positiveListener);
+        if (negativeText != null) builder.setNegativeButton(negativeText, negativeListener);
+        AlertDialog dialog = builder.create();
+        Window w = dialog.getWindow();
+        if (w != null) w.setBackgroundDrawable(GameTheme.roundedStroke(GameTheme.BG_PANEL, GameTheme.VIOLET, dp(18), dp(2)));
+        dialog.setOnShowListener(d -> {
+            Button pos = dialog.getButton(AlertDialog.BUTTON_POSITIVE);
+            if (pos != null) pos.setTextColor(GameTheme.LIME);
+            Button neg = dialog.getButton(AlertDialog.BUTTON_NEGATIVE);
+            if (neg != null) neg.setTextColor(GameTheme.TEXT_SECONDARY);
+        });
+        return dialog;
+    }
+
+    /** Local audio/vibration settings screen, reachable from the Home gear icon. */
+    private void showSettingsScreen() {
+        stopAmbientAnimator();
+        root = baseRoot();
+        root.addView(title("IMPOSTAZIONI"));
+        root.addView(subtitle("Preferenze audio, salvate solo su questo telefono."));
+        root.addView(space(20));
+
+        root.addView(settingsToggleRow("Effetti sonori", sounds.isSoundEnabled(), enabled -> {
+            sounds.setSoundEnabled(enabled);
+            if (enabled) sounds.tap();
+        }));
+        root.addView(space(12));
+        root.addView(settingsToggleRow("Vibrazione", sounds.isVibrationEnabled(), sounds::setVibrationEnabled));
+        root.addView(space(24));
+
+        Button back = secondaryButton("INDIETRO");
+        back.setOnClickListener(v -> {
+            sounds.tap();
+            showHome();
+        });
+        root.addView(back);
+        renderScreen(root);
+    }
+
+    private interface BoolConsumer {
+        void accept(boolean value);
+    }
+
+    private View settingsToggleRow(String label, boolean initiallyOn, BoolConsumer onChange) {
+        FrameLayout card = new FrameLayout(this);
+        card.setBackground(GameTheme.roundedStroke(GameTheme.BG_PANEL, GameTheme.BG_PANEL_LIGHT, dp(14), dp(2)));
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        int pad = dp(16);
+        row.setPadding(pad, pad, pad, pad);
+        TextView labelView = new TextView(this);
+        labelView.setText(label);
+        labelView.setTextSize(16);
+        labelView.setTextColor(GameTheme.TEXT_PRIMARY);
+        labelView.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        row.addView(labelView, weighted());
+        Button toggle = new Button(this);
+        toggle.setAllCaps(false);
+        toggle.setTextSize(13);
+        toggle.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        toggle.setMinHeight(dp(38));
+        toggle.setPadding(dp(18), 0, dp(18), 0);
+        GameAnimations.pressFeedback(toggle);
+        final boolean[] state = {initiallyOn};
+        Runnable refresh = () -> {
+            boolean on = state[0];
+            toggle.setText(on ? "ON" : "OFF");
+            toggle.setTextColor(on ? GameTheme.BG_NIGHT : GameTheme.TEXT_SECONDARY);
+            toggle.setBackground(GameTheme.withRipple(
+                    on ? GameTheme.roundedFill(GameTheme.LIME, dp(19)) : GameTheme.roundedStroke(GameTheme.BG_PANEL_LIGHT, GameTheme.TEXT_MUTED, dp(19), dp(2)),
+                    on ? GameTheme.BG_NIGHT : GameTheme.CYAN));
+        };
+        refresh.run();
+        toggle.setOnClickListener(v -> {
+            state[0] = !state[0];
+            onChange.accept(state[0]);
+            refresh.run();
+        });
+        row.addView(toggle);
+        card.addView(row);
+        return card;
     }
 
     private SpaceView space(int dp) { return new SpaceView(this, dp, false); }
