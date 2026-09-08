@@ -10,7 +10,6 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.graphics.Color;
-import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
 import android.os.Build;
 import android.os.Bundle;
@@ -121,10 +120,12 @@ public class MainActivity extends Activity {
         root.addView(neonDivider());
         titleText = title("FLASHTRIS");
         titleText.setTextSize(40);
+        titleText.setTypeface(GameFonts.display(this));
         root.addView(titleText);
+        activeAmbientAnimator = GameAnimations.glowPulse(titleText, GameTheme.withAlpha(GameTheme.CYAN, 170), dp(8), dp(20));
         TextView payoff = subtitle("GIOCA  •  SFIDA  •  CONNETTITI");
         payoff.setTextColor(GameTheme.CYAN);
-        payoff.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        payoff.setTypeface(GameFonts.bold(this));
         payoff.setTextSize(13);
         root.addView(payoff);
         root.addView(neonDivider());
@@ -170,6 +171,14 @@ public class MainActivity extends Activity {
         menuRow.addView(spaceHorizontal(8));
         menuRow.addView(audioMenuTile(), weighted());
         root.addView(menuRow, matchWrap(0));
+        for (int i = 0; i < menuRow.getChildCount(); i++) {
+            View tile = menuRow.getChildAt(i);
+            if (tile instanceof SpaceView) continue;
+            tile.setScaleX(0.3f);
+            tile.setScaleY(0.3f);
+            tile.setAlpha(0f);
+            tile.postDelayed(() -> GameAnimations.popIn(tile), 70L * i);
+        }
 
         root.addView(space(16));
         root.addView(caption("Connessione locale via Nearby Connections. Nessun backend, nessuna registrazione."));
@@ -266,7 +275,7 @@ public class MainActivity extends Activity {
             TextView cell = new TextView(this);
             cell.setText(String.valueOf(preview[i]));
             cell.setGravity(Gravity.CENTER);
-            cell.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+            cell.setTypeface(GameFonts.bold(this));
             cell.setTextSize(20);
             cell.setTextColor(preview[i] == 'X' ? GameTheme.SYMBOL_X : GameTheme.SYMBOL_O);
             cell.setBackground(GameTheme.insetFill(GameTheme.BG_CELL, dp(8)));
@@ -288,7 +297,7 @@ public class MainActivity extends Activity {
         Button b = new Button(this);
         b.setAllCaps(false);
         b.setTextSize(13);
-        b.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        b.setTypeface(GameFonts.bold(this));
         b.setMinHeight(dp(38));
         b.setPadding(dp(18), 0, dp(18), 0);
         b.setLayoutParams(new LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT));
@@ -491,6 +500,7 @@ public class MainActivity extends Activity {
             if (name.isEmpty()) {
                 errorText.setText("Inserisci un nickname per continuare");
                 errorText.setVisibility(View.VISIBLE);
+                GameAnimations.shake(input);
                 return;
             }
             errorText.setVisibility(View.GONE);
@@ -554,7 +564,7 @@ public class MainActivity extends Activity {
         TextView letter = new TextView(this);
         letter.setText(String.valueOf(symbol));
         letter.setTextSize(56);
-        letter.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        letter.setTypeface(GameFonts.bold(this));
         letter.setTextColor(accentColor);
         letter.setGravity(Gravity.CENTER);
         card.addView(letter, new FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.CENTER));
@@ -607,7 +617,7 @@ public class MainActivity extends Activity {
 
         statusText = new TextView(this);
         statusText.setTextSize(17);
-        statusText.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        statusText.setTypeface(GameFonts.bold(this));
         statusText.setGravity(Gravity.CENTER);
         statusText.setTextColor(GameTheme.TEXT_PRIMARY);
         statusText.setBackground(GameTheme.roundedStroke(GameTheme.BG_PANEL, GameTheme.BG_PANEL_LIGHT, dp(20), dp(2)));
@@ -625,7 +635,7 @@ public class MainActivity extends Activity {
             final int cell = i;
             Button b = new Button(this);
             b.setTextSize(38);
-            b.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+            b.setTypeface(GameFonts.bold(this));
             b.setAllCaps(false);
             b.setMinHeight(dp(94));
             b.setBackground(GameTheme.withRipple(GameTheme.insetStroke(GameTheme.BG_CELL, GameTheme.BG_PANEL_LIGHT, dp(12), dp(2)), GameTheme.CYAN));
@@ -678,7 +688,7 @@ public class MainActivity extends Activity {
         TextView symbolView = new TextView(this);
         symbolView.setText(String.valueOf(symbol));
         symbolView.setTextSize(26);
-        symbolView.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        symbolView.setTypeface(GameFonts.bold(this));
         symbolView.setTextColor(accent);
         symbolView.setGravity(Gravity.CENTER);
         chip.addView(symbolView);
@@ -872,6 +882,7 @@ public class MainActivity extends Activity {
 
         root = baseRoot();
         TextView headlineView = title(headline);
+        headlineView.setTypeface(GameFonts.display(this));
         headlineView.setTextColor(accent);
         headlineView.setTextSize(38);
         root.addView(headlineView);
@@ -894,7 +905,7 @@ public class MainActivity extends Activity {
             char c = board[i];
             cell.setText(c == ' ' ? "" : String.valueOf(c));
             cell.setGravity(Gravity.CENTER);
-            cell.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+            cell.setTypeface(GameFonts.bold(this));
             cell.setTextSize(24);
             cell.setTextColor(c == 'X' ? GameTheme.SYMBOL_X : GameTheme.SYMBOL_O);
             cell.setBackground(onLine
@@ -1057,7 +1068,7 @@ public class MainActivity extends Activity {
         TextView codeView = new TextView(this);
         codeView.setText(hostCode);
         codeView.setTextSize(30);
-        codeView.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        codeView.setTypeface(GameFonts.display(this));
         codeView.setTextColor(GameTheme.CYAN);
         codeView.setGravity(Gravity.CENTER);
         codeView.setPadding(0, dp(4), 0, dp(10));
@@ -1241,7 +1252,7 @@ public class MainActivity extends Activity {
         TextView v = new TextView(this);
         v.setText(t);
         v.setTextSize(34);
-        v.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        v.setTypeface(GameFonts.bold(this));
         v.setTextColor(GameTheme.TEXT_PRIMARY);
         v.setGravity(Gravity.CENTER);
         v.setShadowLayer(dp(10), 0, 0, GameTheme.withAlpha(GameTheme.CYAN, 140));
@@ -1252,6 +1263,7 @@ public class MainActivity extends Activity {
         TextView v = new TextView(this);
         v.setText(t);
         v.setTextSize(17);
+        v.setTypeface(GameFonts.regular(this));
         v.setTextColor(GameTheme.TEXT_SECONDARY);
         v.setGravity(Gravity.CENTER_HORIZONTAL);
         v.setPadding(0, dp(10), 0, dp(10));
@@ -1270,7 +1282,7 @@ public class MainActivity extends Activity {
         b.setText(text);
         b.setAllCaps(false);
         b.setTextSize(17);
-        b.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        b.setTypeface(GameFonts.bold(this));
         b.setTextColor(GameTheme.BG_NIGHT);
         b.setBackground(GameTheme.primaryButtonBackground(dp(16)));
         b.setMinHeight(dp(58));
@@ -1285,7 +1297,7 @@ public class MainActivity extends Activity {
         b.setText(text);
         b.setAllCaps(false);
         b.setTextSize(16);
-        b.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        b.setTypeface(GameFonts.bold(this));
         b.setTextColor(GameTheme.CYAN);
         b.setBackground(GameTheme.secondaryButtonBackground(dp(16)));
         b.setMinHeight(dp(54));
@@ -1300,7 +1312,7 @@ public class MainActivity extends Activity {
         b.setText(text);
         b.setAllCaps(false);
         b.setTextSize(15);
-        b.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        b.setTypeface(GameFonts.bold(this));
         b.setTextColor(GameTheme.DANGER);
         b.setBackground(GameTheme.dangerButtonBackground(dp(16)));
         b.setMinHeight(dp(48));
@@ -1389,7 +1401,7 @@ public class MainActivity extends Activity {
         TextView labelView = new TextView(this);
         labelView.setText(label);
         labelView.setTextSize(13);
-        labelView.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        labelView.setTypeface(GameFonts.bold(this));
         labelView.setTextColor(accent);
         col.addView(labelView);
         col.addView(space(10));
@@ -1409,11 +1421,16 @@ public class MainActivity extends Activity {
         col.setOrientation(LinearLayout.VERTICAL);
         col.setGravity(Gravity.CENTER);
         TextView valueView = new TextView(this);
-        valueView.setText(value);
         valueView.setTextSize(24);
-        valueView.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        valueView.setTypeface(GameFonts.bold(this));
         valueView.setTextColor(GameTheme.TEXT_PRIMARY);
         valueView.setGravity(Gravity.CENTER);
+        if (value.matches("\\d+")) {
+            valueView.setText("0");
+            GameAnimations.countUp(valueView, Integer.parseInt(value), 650);
+        } else {
+            valueView.setText(value);
+        }
         col.addView(valueView);
         TextView labelView = caption(label);
         labelView.setTextSize(10);
@@ -1565,12 +1582,12 @@ public class MainActivity extends Activity {
         labelView.setText(label);
         labelView.setTextSize(16);
         labelView.setTextColor(GameTheme.TEXT_PRIMARY);
-        labelView.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        labelView.setTypeface(GameFonts.bold(this));
         row.addView(labelView, weighted());
         Button toggle = new Button(this);
         toggle.setAllCaps(false);
         toggle.setTextSize(13);
-        toggle.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        toggle.setTypeface(GameFonts.bold(this));
         toggle.setMinHeight(dp(38));
         toggle.setPadding(dp(18), 0, dp(18), 0);
         toggle.setElevation(dp(2));

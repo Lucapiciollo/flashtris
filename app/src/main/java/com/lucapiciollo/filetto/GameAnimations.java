@@ -8,6 +8,7 @@ import android.view.MotionEvent;
 import android.view.View;
 import android.view.animation.AccelerateDecelerateInterpolator;
 import android.view.animation.OvershootInterpolator;
+import android.widget.TextView;
 
 /**
  * Small collection of lightweight, dependency-free view animation helpers
@@ -99,6 +100,35 @@ public final class GameAnimations {
         ObjectAnimator anim = ObjectAnimator.ofPropertyValuesHolder(view, scaleX, scaleY);
         anim.setDuration(550);
         anim.setInterpolator(new OvershootInterpolator());
+        anim.start();
+    }
+
+    /** Quick horizontal shake used as error/invalid-input feedback (e.g. empty nickname). */
+    public static void shake(View view) {
+        ObjectAnimator anim = ObjectAnimator.ofFloat(view, View.TRANSLATION_X,
+                0f, -18f, 18f, -14f, 14f, -8f, 8f, 0f);
+        anim.setDuration(420);
+        anim.start();
+    }
+
+    /** Continuous "breathing" neon glow: animates a TextView's shadow radius between minRadius and maxRadius. */
+    public static Animator glowPulse(TextView view, int color, float minRadius, float maxRadius) {
+        ValueAnimator anim = ValueAnimator.ofFloat(minRadius, maxRadius);
+        anim.setDuration(1400);
+        anim.setRepeatMode(ValueAnimator.REVERSE);
+        anim.setRepeatCount(ValueAnimator.INFINITE);
+        anim.setInterpolator(new AccelerateDecelerateInterpolator());
+        anim.addUpdateListener(a -> view.setShadowLayer((float) a.getAnimatedValue(), 0, 0, color));
+        anim.start();
+        return anim;
+    }
+
+    /** Animates a TextView's integer text counting up from 0 to `to` (e.g. stat values). */
+    public static void countUp(TextView view, int to, int durationMs) {
+        ValueAnimator anim = ValueAnimator.ofInt(0, to);
+        anim.setDuration(durationMs);
+        anim.setInterpolator(new AccelerateDecelerateInterpolator());
+        anim.addUpdateListener(a -> view.setText(String.valueOf((int) a.getAnimatedValue())));
         anim.start();
     }
 }
