@@ -4,6 +4,10 @@ import android.Manifest;
 import android.animation.Animator;
 import android.app.Activity;
 import android.app.AlertDialog;
+import android.content.ClipData;
+import android.content.ClipboardManager;
+import android.content.Context;
+import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.graphics.Color;
 import android.graphics.Typeface;
@@ -64,6 +68,7 @@ public class MainActivity extends Activity {
     private final Random random = new Random();
     private ConnectionsClient connectionsClient;
     private GameSounds sounds;
+    private GameStats stats;
     private String endpointId;
     private boolean host;
     private boolean vsCpu;
@@ -71,12 +76,15 @@ public class MainActivity extends Activity {
     private boolean nicknameSent;
     private String myNickname = "";
     private String opponentNickname = "";
+    private String hostCode = "";
     private char mySymbol = ' ';
     private char opponentSymbol = ' ';
     private char turn = 'X';
     private boolean gameOver;
     private boolean awaitingMoveResult;
     private int lastMoveCell = -1;
+    private long matchStartMs;
+    private int turnsPlayed;
     private final char[] board = new char[9];
 
     private LinearLayout root;
@@ -91,6 +99,7 @@ public class MainActivity extends Activity {
         Log.i(TAG, "onCreate");
         connectionsClient = Nearby.getConnectionsClient(this);
         sounds = new GameSounds(this);
+        stats = new GameStats(this);
         showHome();
     }
 
@@ -108,22 +117,6 @@ public class MainActivity extends Activity {
         stopEverything();
         resetSession();
         root = baseRoot();
-
-        LinearLayout topBar = new LinearLayout(this);
-        topBar.setOrientation(LinearLayout.HORIZONTAL);
-        topBar.setGravity(Gravity.CENTER_VERTICAL);
-        View spacer = new View(this);
-        // Explicit 0 height (not WRAP_CONTENT): a bare View measured WRAP_CONTENT under an
-        // AT_MOST spec expands to fill all available space (View#getDefaultSize returns the
-        // full spec size for AT_MOST, not 0), which would blow up topBar to fill the screen.
-        topBar.addView(spacer, new LinearLayout.LayoutParams(0, 0, 1f));
-        Button settingsBtn = iconButton("⚙");
-        settingsBtn.setOnClickListener(v -> {
-            sounds.tap();
-            showSettingsScreen();
-        });
-        topBar.addView(settingsBtn);
-        root.addView(topBar, matchWrap(0));
 
         root.addView(neonDivider());
         titleText = title("FLASHTRIS");
@@ -164,21 +157,95 @@ public class MainActivity extends Activity {
             startVsCpu();
         });
         root.addView(cpuButton);
-        root.addView(space(18));
+        root.addView(space(20));
 
-        LinearLayout audioRow = new LinearLayout(this);
-        audioRow.setOrientation(LinearLayout.HORIZONTAL);
-        audioRow.setGravity(Gravity.CENTER);
-        TextView audioLabel = caption("Audio");
-        audioLabel.setPadding(0, 0, dp(10), 0);
-        audioRow.addView(audioLabel);
-        Button audioToggle = soundToggleButton();
-        audioRow.addView(audioToggle);
-        root.addView(audioRow, matchWrap(0));
+        LinearLayout menuRow = new LinearLayout(this);
+        menuRow.setOrientation(LinearLayout.HORIZONTAL);
+        menuRow.setGravity(Gravity.CENTER_VERTICAL);
+        menuRow.addView(iconMenuTile("🏆", "CLASSIFICA", this::showLeaderboardScreen), weighted());
+        menuRow.addView(spaceHorizontal(8));
+        menuRow.addView(iconMenuTile("👤", "PROFILO", this::showProfileScreen), weighted());
+        menuRow.addView(spaceHorizontal(8));
+        menuRow.addView(iconMenuTile("⚙", "IMPOSTAZIONI", this::showSettingsScreen), weighted());
+        menuRow.addView(spaceHorizontal(8));
+        menuRow.addView(audioMenuTile(), weighted());
+        root.addView(menuRow, matchWrap(0));
 
         root.addView(space(16));
         root.addView(caption("Connessione locale via Nearby Connections. Nessun backend, nessuna registrazione."));
         renderScreen(root);
+    }
+
+    /** Square icon tile with a caption underneath, used for the Home bottom menu (Classifica/Profilo/Impostazioni). */
+    private View iconMenuTile(String glyph, String label, Runnable onClick) {
+        LinearLayout tile = new LinearLayout(this);
+        tile.setOrientation(LinearLayout.VERTICAL);
+        tile.setGravity(Gravity.CENTER);
+        int padH = dp(4);
+        int padV = dp(10);
+        tile.setPadding(padH, padV, padH, padV);
+        tile.setBackground(GameTheme.withRipple(GameTheme.roundedStroke(GameTheme.BG_PANEL, GameTheme.BG_PANEL_LIGHT, dp(14), dp(2)), GameTheme.CYAN));
+        tile.setClickable(true);
+        tile.setFocusable(true);
+        tile.setMinimumHeight(dp(76));
+        GameAnimations.pressFeedback(tile);
+        TextView glyphView = new TextView(this);
+        glyphView.setText(glyph);
+        glyphView.setTextSize(22);
+        glyphView.setGravity(Gravity.CENTER);
+        tile.addView(glyphView);
+        TextView labelView = caption(label);
+        labelView.setTextSize(9);
+        labelView.setSingleLine(true);
+        labelView.setPadding(0, dp(4), 0, 0);
+        tile.addView(labelView);
+        tile.setOnClickListener(v -> {
+            sounds.tap();
+            onClick.run();
+        });
+        return tile;
+    }
+
+    /** Same square tile style as {@link #iconMenuTile}, but toggles sound on/off in place (small status dot). */
+    private View audioMenuTile() {
+        LinearLayout tile = new LinearLayout(this);
+        tile.setOrientation(LinearLayout.VERTICAL);
+        tile.setGravity(Gravity.CENTER);
+        int padH = dp(4);
+        int padV = dp(10);
+        tile.setPadding(padH, padV, padH, padV);
+        tile.setBackground(GameTheme.withRipple(GameTheme.roundedStroke(GameTheme.BG_PANEL, GameTheme.BG_PANEL_LIGHT, dp(14), dp(2)), GameTheme.CYAN));
+        tile.setClickable(true);
+        tile.setFocusable(true);
+        tile.setMinimumHeight(dp(76));
+        GameAnimations.pressFeedback(tile);
+
+        FrameLayout glyphWrap = new FrameLayout(this);
+        TextView glyphView = new TextView(this);
+        glyphView.setText("🔊");
+        glyphView.setTextSize(22);
+        glyphView.setGravity(Gravity.CENTER);
+        glyphWrap.addView(glyphView, new FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.CENTER));
+        View dot = new View(this);
+        int dotSize = dp(9);
+        FrameLayout.LayoutParams dotLp = new FrameLayout.LayoutParams(dotSize, dotSize, Gravity.TOP | Gravity.END);
+        glyphWrap.addView(dot, dotLp);
+        tile.addView(glyphWrap);
+        TextView labelView = caption("AUDIO");
+        labelView.setTextSize(9);
+        labelView.setSingleLine(true);
+        labelView.setPadding(0, dp(4), 0, 0);
+        tile.addView(labelView);
+
+        Runnable refresh = () -> dot.setBackground(GameTheme.ovalFill(sounds.isSoundEnabled() ? GameTheme.LIME : GameTheme.TEXT_MUTED));
+        refresh.run();
+        tile.setOnClickListener(v -> {
+            boolean enable = !sounds.isSoundEnabled();
+            sounds.setSoundEnabled(enable);
+            if (enable) sounds.tap();
+            refresh.run();
+        });
+        return tile;
     }
 
     /** Small static, non-interactive tic-tac-toe grid used as a decorative preview on the Home screen. */
@@ -254,8 +321,9 @@ public class MainActivity extends Activity {
     }
 
     private void startAdvertising() {
+        hostCode = String.format(Locale.ITALY, "%04d", random.nextInt(10000));
         showWaiting("Partita creata", "Sto aspettando un amico vicino…");
-        String endpointName = "FlashTris-" + String.format(Locale.ITALY, "%04d", random.nextInt(10000));
+        String endpointName = "FlashTris-" + hostCode;
         AdvertisingOptions options = new AdvertisingOptions.Builder().setStrategy(STRATEGY).build();
         try {
             Log.i(TAG, "startAdvertising as " + endpointName);
@@ -492,7 +560,7 @@ public class MainActivity extends Activity {
     private void startVsCpu() {
         vsCpu = true;
         host = true;
-        myNickname = "Tu";
+        myNickname = stats.getNickname("Tu");
         opponentNickname = "CPU";
         showSymbolChoice();
     }
@@ -503,6 +571,8 @@ public class MainActivity extends Activity {
         turn = 'X';
         gameOver = false;
         lastMoveCell = -1;
+        matchStartMs = System.currentTimeMillis();
+        turnsPlayed = 0;
         clearBoard();
         JSONObject msg = message("START");
         try {
@@ -522,18 +592,20 @@ public class MainActivity extends Activity {
         LinearLayout header = new LinearLayout(this);
         header.setOrientation(LinearLayout.HORIZONTAL);
         header.setGravity(Gravity.CENTER_VERTICAL);
-        header.addView(playerChip(myNickname, mySymbol, true), weighted());
+        header.addView(playerChip(myNickname, mySymbol, true, stats.getAvatar()), weighted());
         Button audioToggle = soundToggleButton();
         header.addView(audioToggle);
-        header.addView(playerChip(opponentNickname, opponentSymbol, false), weighted());
+        header.addView(playerChip(opponentNickname, opponentSymbol, false, vsCpu ? "🤖" : "🎮"), weighted());
         root.addView(header, matchWrap(0));
         root.addView(space(14));
 
         statusText = new TextView(this);
-        statusText.setTextSize(19);
+        statusText.setTextSize(17);
         statusText.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
         statusText.setGravity(Gravity.CENTER);
         statusText.setTextColor(GameTheme.TEXT_PRIMARY);
+        statusText.setBackground(GameTheme.roundedStroke(GameTheme.BG_PANEL, GameTheme.BG_PANEL_LIGHT, dp(20), dp(2)));
+        statusText.setPadding(dp(20), dp(10), dp(20), dp(10));
         root.addView(statusText, matchWrap(dp(6)));
         root.addView(space(16));
 
@@ -575,18 +647,25 @@ public class MainActivity extends Activity {
         renderBoard();
     }
 
-    /** Compact nickname + symbol chip shown in the gameplay header. */
-    private View playerChip(String nickname, char symbol, boolean mine) {
+    /** Compact avatar + nickname + symbol chip shown in the gameplay header. */
+    private View playerChip(String nickname, char symbol, boolean mine, String avatar) {
         LinearLayout chip = new LinearLayout(this);
         chip.setOrientation(LinearLayout.VERTICAL);
         chip.setGravity(Gravity.CENTER);
         int accent = symbol == 'X' ? GameTheme.SYMBOL_X : GameTheme.SYMBOL_O;
+        TextView avatarView = new TextView(this);
+        avatarView.setText(avatar);
+        avatarView.setTextSize(22);
+        avatarView.setGravity(Gravity.CENTER);
+        avatarView.setBackground(GameTheme.roundedStroke(GameTheme.BG_PANEL, accent, dp(20), dp(2)));
+        chip.addView(avatarView, new LinearLayout.LayoutParams(dp(40), dp(40)));
         TextView name = new TextView(this);
         name.setText(nickname.isEmpty() ? (mine ? "Tu" : "Avversario") : nickname);
         name.setTextSize(13);
         name.setTextColor(GameTheme.TEXT_SECONDARY);
         name.setGravity(Gravity.CENTER);
         name.setSingleLine(true);
+        name.setPadding(0, dp(4), 0, 0);
         chip.addView(name);
         TextView symbolView = new TextView(this);
         symbolView.setText(String.valueOf(symbol));
@@ -620,6 +699,7 @@ public class MainActivity extends Activity {
         }
         board[cell] = symbol;
         lastMoveCell = cell;
+        turnsPlayed++;
         char winner = winner();
         if (winner != ' ') gameOver = true;
         else if (isDraw()) gameOver = true;
@@ -674,6 +754,8 @@ public class MainActivity extends Activity {
                         gameOver = false;
                         awaitingMoveResult = false;
                         lastMoveCell = -1;
+                        matchStartMs = System.currentTimeMillis();
+                        turnsPlayed = 0;
                         clearBoard();
                         showGame();
                     }
@@ -693,6 +775,7 @@ public class MainActivity extends Activity {
                         }
                         if (changedCell != -1) {
                             lastMoveCell = changedCell;
+                            turnsPlayed++;
                             if (board[changedCell] == 'X') sounds.moveX(); else sounds.moveO();
                         }
                         String t = msg.optString("turn", "X");
@@ -719,6 +802,8 @@ public class MainActivity extends Activity {
                         gameOver = false;
                         awaitingMoveResult = false;
                         lastMoveCell = -1;
+                        matchStartMs = System.currentTimeMillis();
+                        turnsPlayed = 0;
                         showGame();
                     }
                     break;
@@ -744,6 +829,8 @@ public class MainActivity extends Activity {
         gameOver = false;
         awaitingMoveResult = false;
         lastMoveCell = -1;
+        matchStartMs = System.currentTimeMillis();
+        turnsPlayed = 0;
         JSONObject msg = message("REMATCH_START");
         try { msg.put("guestSymbol", String.valueOf(opponentSymbol)); } catch (JSONException ignored) { }
         Log.i(TAG, "startRematch mySymbol=" + mySymbol);
@@ -769,6 +856,11 @@ public class MainActivity extends Activity {
         String headline = draw ? "PAREGGIO" : (iWon ? "HAI VINTO!" : "HAI PERSO");
         int accent = draw ? GameTheme.VIOLET : (iWon ? GameTheme.LIME : GameTheme.DANGER);
         if (draw) sounds.draw(); else if (iWon) sounds.win(); else sounds.lose();
+
+        stats.recordResult(vsCpu, draw ? GameStats.Outcome.DRAW : (iWon ? GameStats.Outcome.WIN : GameStats.Outcome.LOSS));
+        long durationSec = Math.max(0, (System.currentTimeMillis() - matchStartMs) / 1000);
+        String durationLabel = String.format(Locale.ITALY, "%02d:%02d", durationSec / 60, durationSec % 60);
+        int streak = stats.getCurrentStreak();
 
         root = baseRoot();
         TextView headlineView = title(headline);
@@ -812,7 +904,20 @@ public class MainActivity extends Activity {
         FrameLayout boardWrapper = new FrameLayout(this);
         boardWrapper.addView(boardCard, new FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.CENTER));
         root.addView(boardWrapper, matchWrap(0));
-        root.addView(space(24));
+        root.addView(space(20));
+
+        FrameLayout matchStatsCard = new FrameLayout(this);
+        matchStatsCard.setBackground(GameTheme.roundedStroke(GameTheme.BG_PANEL, GameTheme.BG_PANEL_LIGHT, dp(16), dp(2)));
+        LinearLayout matchStatsRow = new LinearLayout(this);
+        matchStatsRow.setOrientation(LinearLayout.HORIZONTAL);
+        int statsPad = dp(14);
+        matchStatsRow.setPadding(statsPad, statsPad, statsPad, statsPad);
+        matchStatsRow.addView(statBlock("DURATA", durationLabel), weighted());
+        matchStatsRow.addView(statBlock("TURNI", String.valueOf(turnsPlayed)), weighted());
+        matchStatsRow.addView(statBlock("SERIE VITTORIE", String.valueOf(streak)), weighted());
+        matchStatsCard.addView(matchStatsRow);
+        root.addView(matchStatsCard, matchWrap(0));
+        root.addView(space(20));
 
         if (host) {
             Button rematch = primaryButton("RIVINCITA");
@@ -912,7 +1017,11 @@ public class MainActivity extends Activity {
         statusText = subtitle(status);
         statusText.setGravity(Gravity.CENTER);
         root.addView(statusText);
-        root.addView(space(26));
+        root.addView(space(20));
+        if (host && !hostCode.isEmpty()) {
+            root.addView(hostCodeCard());
+            root.addView(space(14));
+        }
         root.addView(radarView());
         root.addView(space(10));
         Button cancel = secondaryButton("ANNULLA");
@@ -922,6 +1031,55 @@ public class MainActivity extends Activity {
         });
         root.addView(cancel);
         renderScreen(root);
+    }
+
+    /** Card showing the host's match code (real, taken from the advertised endpoint name) with copy/share actions. */
+    private View hostCodeCard() {
+        FrameLayout card = new FrameLayout(this);
+        card.setBackground(GameTheme.roundedStroke(GameTheme.BG_PANEL, GameTheme.BG_PANEL_LIGHT, dp(16), dp(2)));
+        LinearLayout col = new LinearLayout(this);
+        col.setOrientation(LinearLayout.VERTICAL);
+        col.setGravity(Gravity.CENTER);
+        int pad = dp(16);
+        col.setPadding(pad, pad, pad, pad);
+        col.addView(caption("CODICE PARTITA"));
+        TextView codeView = new TextView(this);
+        codeView.setText(hostCode);
+        codeView.setTextSize(30);
+        codeView.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        codeView.setTextColor(GameTheme.CYAN);
+        codeView.setGravity(Gravity.CENTER);
+        codeView.setPadding(0, dp(4), 0, dp(10));
+        col.addView(codeView);
+
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.CENTER);
+        Button copy = secondaryButton("COPIA CODICE");
+        copy.setTextSize(13);
+        copy.setOnClickListener(v -> {
+            sounds.tap();
+            ClipboardManager clipboard = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
+            if (clipboard != null) {
+                clipboard.setPrimaryClip(ClipData.newPlainText("Codice FlashTris", hostCode));
+                Toast.makeText(this, "Codice copiato", Toast.LENGTH_SHORT).show();
+            }
+        });
+        row.addView(copy, weighted());
+        row.addView(spaceHorizontal(10));
+        Button share = secondaryButton("CONDIVIDI");
+        share.setTextSize(13);
+        share.setOnClickListener(v -> {
+            sounds.tap();
+            Intent send = new Intent(Intent.ACTION_SEND);
+            send.setType("text/plain");
+            send.putExtra(Intent.EXTRA_TEXT, "Sfidami su FlashTris! Il mio codice partita è " + hostCode + " — avvicinati e apri l'app per giocare.");
+            startActivity(Intent.createChooser(send, "Condividi codice partita"));
+        });
+        row.addView(share, weighted());
+        col.addView(row);
+        card.addView(col);
+        return card;
     }
 
     /** Simple, lightweight radar/scan decoration used on waiting/connecting screens (no custom Canvas work needed). */
@@ -1027,6 +1185,7 @@ public class MainActivity extends Activity {
         nicknameSent = false;
         myNickname = "";
         opponentNickname = "";
+        hostCode = "";
         mySymbol = ' ';
         opponentSymbol = ' ';
         turn = 'X';
@@ -1136,21 +1295,6 @@ public class MainActivity extends Activity {
         return b;
     }
 
-    /** Small square icon-only button (used for the settings gear on Home). */
-    private Button iconButton(String glyph) {
-        Button b = new Button(this);
-        b.setText(glyph);
-        b.setAllCaps(false);
-        b.setTextSize(18);
-        b.setTextColor(GameTheme.TEXT_PRIMARY);
-        b.setBackground(GameTheme.secondaryButtonBackground(dp(14)));
-        b.setMinWidth(dp(44));
-        b.setMinHeight(dp(44));
-        b.setPadding(0, 0, 0, 0);
-        GameAnimations.pressFeedback(b);
-        return b;
-    }
-
     /**
      * Minimal dark-theme reskin of the standard AlertDialog: a themed custom
      * title, message body and tinted action buttons. Kept intentionally
@@ -1181,6 +1325,165 @@ public class MainActivity extends Activity {
             if (neg != null) neg.setTextColor(GameTheme.TEXT_SECONDARY);
         });
         return dialog;
+    }
+
+    /** Local win/loss/draw statistics screen, reachable from the Home menu. All data stays on-device. */
+    private void showLeaderboardScreen() {
+        stopAmbientAnimator();
+        root = baseRoot();
+        root.addView(title("CLASSIFICA"));
+        root.addView(subtitle("Le tue statistiche, salvate solo su questo telefono."));
+        root.addView(space(18));
+
+        root.addView(statsSection("ONLINE (Nearby)", stats.getWins(false), stats.getLosses(false), stats.getDraws(false), GameTheme.CYAN));
+        root.addView(space(14));
+        root.addView(statsSection("VS CPU", stats.getWins(true), stats.getLosses(true), stats.getDraws(true), GameTheme.VIOLET));
+        root.addView(space(14));
+
+        FrameLayout streakCard = new FrameLayout(this);
+        streakCard.setBackground(GameTheme.glowPanel(GameTheme.BG_PANEL, GameTheme.LIME, dp(16), dp(2), dp(6)));
+        LinearLayout streakRow = new LinearLayout(this);
+        streakRow.setOrientation(LinearLayout.HORIZONTAL);
+        int streakPad = dp(16);
+        streakRow.setPadding(streakPad, streakPad, streakPad, streakPad);
+        streakRow.addView(statBlock("SERIE ATTUALE", String.valueOf(stats.getCurrentStreak())), weighted());
+        streakRow.addView(statBlock("RECORD SERIE", String.valueOf(stats.getBestStreak())), weighted());
+        streakCard.addView(streakRow);
+        root.addView(streakCard, matchWrap(0));
+        root.addView(space(24));
+
+        Button back = secondaryButton("INDIETRO");
+        back.setOnClickListener(v -> {
+            sounds.tap();
+            showHome();
+        });
+        root.addView(back);
+        renderScreen(root);
+    }
+
+    /** Card with a section title and a VITTORIE/SCONFITTE/PAREGGI row, used on the leaderboard screen. */
+    private View statsSection(String label, int wins, int losses, int draws, int accent) {
+        FrameLayout card = new FrameLayout(this);
+        card.setBackground(GameTheme.roundedStroke(GameTheme.BG_PANEL, GameTheme.BG_PANEL_LIGHT, dp(16), dp(2)));
+        LinearLayout col = new LinearLayout(this);
+        col.setOrientation(LinearLayout.VERTICAL);
+        int pad = dp(16);
+        col.setPadding(pad, pad, pad, pad);
+        TextView labelView = new TextView(this);
+        labelView.setText(label);
+        labelView.setTextSize(13);
+        labelView.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        labelView.setTextColor(accent);
+        col.addView(labelView);
+        col.addView(space(10));
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.addView(statBlock("VITTORIE", String.valueOf(wins)), weighted());
+        row.addView(statBlock("SCONFITTE", String.valueOf(losses)), weighted());
+        row.addView(statBlock("PAREGGI", String.valueOf(draws)), weighted());
+        col.addView(row);
+        card.addView(col);
+        return card;
+    }
+
+    /** Single centered value+caption block (e.g. "3" / "VITTORIE") used in stats rows. */
+    private View statBlock(String label, String value) {
+        LinearLayout col = new LinearLayout(this);
+        col.setOrientation(LinearLayout.VERTICAL);
+        col.setGravity(Gravity.CENTER);
+        TextView valueView = new TextView(this);
+        valueView.setText(value);
+        valueView.setTextSize(24);
+        valueView.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
+        valueView.setTextColor(GameTheme.TEXT_PRIMARY);
+        valueView.setGravity(Gravity.CENTER);
+        col.addView(valueView);
+        TextView labelView = caption(label);
+        labelView.setTextSize(10);
+        col.addView(labelView);
+        return col;
+    }
+
+    /** Local profile screen: persistent nickname + avatar shown to opponents, reachable from the Home menu. */
+    private void showProfileScreen() {
+        stopAmbientAnimator();
+        root = baseRoot();
+        root.addView(title("PROFILO"));
+        root.addView(subtitle("Nome e avatar mostrati nelle tue partite."));
+        root.addView(space(18));
+
+        FrameLayout avatarCard = new FrameLayout(this);
+        avatarCard.setBackground(GameTheme.glowPanel(GameTheme.BG_PANEL, GameTheme.VIOLET, dp(50), dp(2), dp(6)));
+        TextView avatarView = new TextView(this);
+        avatarView.setText(stats.getAvatar());
+        avatarView.setTextSize(48);
+        avatarView.setGravity(Gravity.CENTER);
+        avatarCard.addView(avatarView, new FrameLayout.LayoutParams(dp(100), dp(100), Gravity.CENTER));
+        FrameLayout avatarWrap = new FrameLayout(this);
+        avatarWrap.addView(avatarCard, new FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.CENTER));
+        root.addView(avatarWrap, matchWrap(0));
+        root.addView(space(18));
+
+        EditText nameInput = new EditText(this);
+        nameInput.setText(stats.getNickname("FlashPlayer"));
+        nameInput.setHint("Il tuo nickname");
+        nameInput.setHintTextColor(GameTheme.TEXT_MUTED);
+        nameInput.setTextColor(GameTheme.TEXT_PRIMARY);
+        nameInput.setSingleLine(true);
+        nameInput.setGravity(Gravity.CENTER);
+        nameInput.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_FLAG_CAP_SENTENCES);
+        nameInput.setTextSize(18);
+        nameInput.setPadding(dp(18), dp(14), dp(18), dp(14));
+        nameInput.setBackground(GameTheme.roundedStroke(GameTheme.BG_PANEL, GameTheme.CYAN, dp(14), dp(2)));
+        root.addView(nameInput, matchWrap(0));
+        root.addView(space(18));
+
+        root.addView(caption("Scegli un avatar"));
+        root.addView(space(8));
+        GridLayout avatarGrid = new GridLayout(this);
+        avatarGrid.setColumnCount(5);
+        for (String avatar : GameStats.AVATARS) {
+            boolean selected = avatar.equals(stats.getAvatar());
+            TextView cell = new TextView(this);
+            cell.setText(avatar);
+            cell.setTextSize(26);
+            cell.setGravity(Gravity.CENTER);
+            cell.setClickable(true);
+            cell.setFocusable(true);
+            cell.setBackground(selected
+                    ? GameTheme.roundedStroke(GameTheme.BG_PANEL_LIGHT, GameTheme.LIME, dp(12), dp(2))
+                    : GameTheme.roundedFill(GameTheme.BG_PANEL, dp(12)));
+            GameAnimations.pressFeedback(cell);
+            GridLayout.LayoutParams lp = new GridLayout.LayoutParams();
+            lp.width = dp(52);
+            lp.height = dp(52);
+            lp.setMargins(dp(4), dp(4), dp(4), dp(4));
+            cell.setOnClickListener(v -> {
+                sounds.tap();
+                stats.setAvatar(avatar);
+                showProfileScreen();
+            });
+            avatarGrid.addView(cell, lp);
+        }
+        FrameLayout gridWrap = new FrameLayout(this);
+        gridWrap.addView(avatarGrid, new FrameLayout.LayoutParams(FrameLayout.LayoutParams.WRAP_CONTENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.CENTER));
+        root.addView(gridWrap, matchWrap(0));
+        root.addView(space(20));
+
+        int totalWins = stats.getWins(false) + stats.getWins(true);
+        int totalLosses = stats.getLosses(false) + stats.getLosses(true);
+        root.addView(caption("Vittorie totali: " + totalWins + "  •  Sconfitte totali: " + totalLosses));
+        root.addView(space(20));
+
+        Button save = primaryButton("SALVA E TORNA");
+        save.setOnClickListener(v -> {
+            sounds.tap();
+            String name = nameInput.getText().toString().trim();
+            stats.setNickname(name.isEmpty() ? "FlashPlayer" : (name.length() > 18 ? name.substring(0, 18) : name));
+            showHome();
+        });
+        root.addView(save);
+        renderScreen(root);
     }
 
     /** Local audio/vibration settings screen, reachable from the Home gear icon. */
