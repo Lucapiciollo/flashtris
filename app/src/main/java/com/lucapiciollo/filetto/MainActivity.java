@@ -292,6 +292,7 @@ public class MainActivity extends Activity {
         b.setMinHeight(dp(38));
         b.setPadding(dp(18), 0, dp(18), 0);
         b.setLayoutParams(new LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT));
+        b.setElevation(dp(3));
         GameAnimations.pressFeedback(b);
         updateSoundToggleLabel(b);
         b.setOnClickListener(v -> {
@@ -472,6 +473,7 @@ public class MainActivity extends Activity {
         input.setTextSize(18);
         input.setPadding(dp(18), dp(14), dp(18), dp(14));
         input.setBackground(GameTheme.roundedStroke(GameTheme.BG_PANEL, GameTheme.CYAN, dp(14), dp(2)));
+        input.setElevation(dp(3));
         root.addView(input, matchWrap(0));
 
         TextView errorText = caption("");
@@ -610,6 +612,7 @@ public class MainActivity extends Activity {
         statusText.setTextColor(GameTheme.TEXT_PRIMARY);
         statusText.setBackground(GameTheme.roundedStroke(GameTheme.BG_PANEL, GameTheme.BG_PANEL_LIGHT, dp(20), dp(2)));
         statusText.setPadding(dp(20), dp(10), dp(20), dp(10));
+        statusText.setElevation(dp(3));
         root.addView(statusText, matchWrap(dp(6)));
         root.addView(space(16));
 
@@ -662,6 +665,7 @@ public class MainActivity extends Activity {
         avatarView.setTextSize(22);
         avatarView.setGravity(Gravity.CENTER);
         avatarView.setBackground(GameTheme.roundedStroke(GameTheme.BG_PANEL, accent, dp(20), dp(2)));
+        avatarView.setElevation(dp(3));
         chip.addView(avatarView, new LinearLayout.LayoutParams(dp(40), dp(40)));
         TextView name = new TextView(this);
         name.setText(nickname.isEmpty() ? (mine ? "Tu" : "Avversario") : nickname);
@@ -913,6 +917,7 @@ public class MainActivity extends Activity {
 
         FrameLayout matchStatsCard = new FrameLayout(this);
         matchStatsCard.setBackground(GameTheme.roundedStroke(GameTheme.BG_PANEL, GameTheme.BG_PANEL_LIGHT, dp(16), dp(2)));
+        matchStatsCard.setElevation(dp(4));
         LinearLayout matchStatsRow = new LinearLayout(this);
         matchStatsRow.setOrientation(LinearLayout.HORIZONTAL);
         int statsPad = dp(14);
@@ -1042,6 +1047,7 @@ public class MainActivity extends Activity {
     private View hostCodeCard() {
         FrameLayout card = new FrameLayout(this);
         card.setBackground(GameTheme.roundedStroke(GameTheme.BG_PANEL, GameTheme.BG_PANEL_LIGHT, dp(16), dp(2)));
+        card.setElevation(dp(4));
         LinearLayout col = new LinearLayout(this);
         col.setOrientation(LinearLayout.VERTICAL);
         col.setGravity(Gravity.CENTER);
@@ -1105,6 +1111,7 @@ public class MainActivity extends Activity {
         View core = new View(this);
         int coreSize = dp(56);
         core.setBackground(GameTheme.ovalFill(GameTheme.VIOLET));
+        core.setElevation(dp(4));
         container.addView(core, new FrameLayout.LayoutParams(coreSize, coreSize, Gravity.CENTER));
 
         GameAnimations.stop(activeAmbientAnimator);
@@ -1374,6 +1381,7 @@ public class MainActivity extends Activity {
     private View statsSection(String label, int wins, int losses, int draws, int accent) {
         FrameLayout card = new FrameLayout(this);
         card.setBackground(GameTheme.roundedStroke(GameTheme.BG_PANEL, GameTheme.BG_PANEL_LIGHT, dp(16), dp(2)));
+        card.setElevation(dp(4));
         LinearLayout col = new LinearLayout(this);
         col.setOrientation(LinearLayout.VERTICAL);
         int pad = dp(16);
@@ -1445,6 +1453,7 @@ public class MainActivity extends Activity {
         nameInput.setTextSize(18);
         nameInput.setPadding(dp(18), dp(14), dp(18), dp(14));
         nameInput.setBackground(GameTheme.roundedStroke(GameTheme.BG_PANEL, GameTheme.CYAN, dp(14), dp(2)));
+        nameInput.setElevation(dp(3));
         root.addView(nameInput, matchWrap(0));
         root.addView(space(18));
 
@@ -1463,6 +1472,7 @@ public class MainActivity extends Activity {
             cell.setBackground(selected
                     ? GameTheme.roundedStroke(GameTheme.BG_PANEL_LIGHT, GameTheme.LIME, dp(12), dp(2))
                     : GameTheme.roundedFill(GameTheme.BG_PANEL, dp(12)));
+            cell.setElevation(dp(2));
             GameAnimations.pressFeedback(cell);
             GridLayout.LayoutParams lp = new GridLayout.LayoutParams();
             lp.width = dp(52);
@@ -1545,6 +1555,7 @@ public class MainActivity extends Activity {
     private View settingsToggleRow(String label, boolean initiallyOn, BoolConsumer onChange) {
         FrameLayout card = new FrameLayout(this);
         card.setBackground(GameTheme.roundedStroke(GameTheme.BG_PANEL, GameTheme.BG_PANEL_LIGHT, dp(14), dp(2)));
+        card.setElevation(dp(3));
         LinearLayout row = new LinearLayout(this);
         row.setOrientation(LinearLayout.HORIZONTAL);
         row.setGravity(Gravity.CENTER_VERTICAL);
@@ -1562,6 +1573,7 @@ public class MainActivity extends Activity {
         toggle.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
         toggle.setMinHeight(dp(38));
         toggle.setPadding(dp(18), 0, dp(18), 0);
+        toggle.setElevation(dp(2));
         GameAnimations.pressFeedback(toggle);
         final boolean[] state = {initiallyOn};
         Runnable refresh = () -> {
