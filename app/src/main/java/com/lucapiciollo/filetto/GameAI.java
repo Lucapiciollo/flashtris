@@ -1,13 +1,21 @@
 package com.lucapiciollo.filetto;
 
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Random;
+
 /**
- * Perfect-play tic-tac-toe engine (minimax + alpha-beta pruning), used for the
- * single-player "vs CPU" mode. The 3x3 game tree is tiny, so an exhaustive
- * search completes instantly on any device and never needs a background
- * thread. Difficulty is intentionally fixed to "high": the CPU never makes a
- * mistake, so a human can at best force a draw with perfect play.
+ * Minimax + alpha-beta tic-tac-toe engine used for the single-player "vs CPU" mode. The CPU
+ * occasionally plays a random legal move instead of the perfect one (see {@link #MISTAKE_CHANCE}),
+ * so a human can actually win sometimes - a flawless, unbeatable CPU made the "vittorie" stat
+ * impossible to ever increase, which felt broken in a casual pastime game.
  */
 final class GameAI {
+
+    /** Probability (0..1) that the CPU ignores the perfect move and plays a random legal one instead. */
+    private static final double MISTAKE_CHANCE = 0.25;
+
+    private static final Random RANDOM = new Random();
 
     private static final int[][] WIN_LINES = {
             {0, 1, 2}, {3, 4, 5}, {6, 7, 8},
@@ -20,10 +28,17 @@ final class GameAI {
 
     /** Returns the best cell (0-8) for {@code aiSymbol} to play on the given board, or -1 if it is full. */
     static int bestMove(char[] board, char aiSymbol, char humanSymbol) {
+        List<Integer> emptyCells = new ArrayList<>();
+        for (int i = 0; i < 9; i++) if (board[i] == ' ') emptyCells.add(i);
+        if (emptyCells.isEmpty()) return -1;
+
+        if (RANDOM.nextDouble() < MISTAKE_CHANCE) {
+            return emptyCells.get(RANDOM.nextInt(emptyCells.size()));
+        }
+
         int bestScore = Integer.MIN_VALUE;
         int bestCell = -1;
-        for (int i = 0; i < 9; i++) {
-            if (board[i] != ' ') continue;
+        for (int i : emptyCells) {
             board[i] = aiSymbol;
             int score = minimax(board, 0, false, aiSymbol, humanSymbol, Integer.MIN_VALUE, Integer.MAX_VALUE);
             board[i] = ' ';
