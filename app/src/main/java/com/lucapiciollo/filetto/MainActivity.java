@@ -100,6 +100,21 @@ public class MainActivity extends Activity {
         sounds = new GameSounds(this);
         stats = new GameStats(this);
         showHome();
+        GameUpdateChecker.checkForUpdate(this);
+    }
+
+    @Override
+    protected void onResume() {
+        super.onResume();
+        GameUpdateChecker.resumeUpdateIfInProgress(this);
+    }
+
+    @Override
+    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+        super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode == GameUpdateChecker.REQ_UPDATE && resultCode != RESULT_OK) {
+            Log.i(TAG, "In-app update flow not completed (result=" + resultCode + ")");
+        }
     }
 
     @Override
