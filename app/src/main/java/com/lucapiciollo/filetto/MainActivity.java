@@ -749,7 +749,7 @@ public class MainActivity extends Activity {
         if (!vsCpu || gameOver || turn != opponentSymbol || root == null) return;
         root.postDelayed(() -> {
             if (isFinishing() || isDestroyed() || !vsCpu || gameOver || turn != opponentSymbol) return;
-            int cell = GameAI.bestMove(board, opponentSymbol, mySymbol);
+            int cell = GameAI.bestMove(board, opponentSymbol, mySymbol, stats.getWins(true));
             if (cell < 0) return;
             if (opponentSymbol == 'X') sounds.moveX(); else sounds.moveO();
             applyMove(cell, opponentSymbol);

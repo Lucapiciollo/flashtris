@@ -6,14 +6,24 @@ import java.util.Random;
 
 /**
  * Minimax + alpha-beta tic-tac-toe engine used for the single-player "vs CPU" mode. The CPU
- * occasionally plays a random legal move instead of the perfect one (see {@link #MISTAKE_CHANCE}),
- * so a human can actually win sometimes - a flawless, unbeatable CPU made the "vittorie" stat
- * impossible to ever increase, which felt broken in a casual pastime game.
+ * occasionally plays a random legal move instead of the perfect one, so a human can actually win
+ * sometimes - a flawless, unbeatable CPU made the "vittorie" stat impossible to ever increase,
+ * which felt broken in a casual pastime game.
+ *
+ * <p>Difficulty ramps up with the player's own track record: it starts fairly forgiving and gets
+ * tougher (down to unbeatable) as the player accumulates more CPU wins, based on the win count
+ * already persisted in {@link GameStats}. No separate skill-tracking system needed.
  */
 final class GameAI {
 
-    /** Probability (0..1) that the CPU ignores the perfect move and plays a random legal one instead. */
-    private static final double MISTAKE_CHANCE = 0.25;
+    /** Mistake chance used for a brand-new player (0 CPU wins so far): fairly forgiving. */
+    private static final double START_MISTAKE_CHANCE = 0.35;
+
+    /** Mistake chance once the player reaches {@link #WINS_FOR_MAX_DIFFICULTY} wins: perfect play, unbeatable. */
+    private static final double MIN_MISTAKE_CHANCE = 0.0;
+
+    /** Number of CPU wins after which the CPU plays at full (perfect) difficulty. */
+    private static final int WINS_FOR_MAX_DIFFICULTY = 10;
 
     private static final Random RANDOM = new Random();
 
@@ -26,13 +36,19 @@ final class GameAI {
     private GameAI() {
     }
 
-    /** Returns the best cell (0-8) for {@code aiSymbol} to play on the given board, or -1 if it is full. */
-    static int bestMove(char[] board, char aiSymbol, char humanSymbol) {
+    /** Returns the CPU's current mistake probability given how many CPU matches the player has already won. */
+    static double mistakeChanceForWins(int winsVsCpu) {
+        double progress = Math.min(1.0, Math.max(0.0, winsVsCpu / (double) WINS_FOR_MAX_DIFFICULTY));
+        return START_MISTAKE_CHANCE - progress * (START_MISTAKE_CHANCE - MIN_MISTAKE_CHANCE);
+    }
+
+    /** Returns the best cell (0-8) for {@code aiSymbol} to play, or -1 if the board is full. Difficulty scales with {@code winsVsCpu}. */
+    static int bestMove(char[] board, char aiSymbol, char humanSymbol, int winsVsCpu) {
         List<Integer> emptyCells = new ArrayList<>();
         for (int i = 0; i < 9; i++) if (board[i] == ' ') emptyCells.add(i);
         if (emptyCells.isEmpty()) return -1;
 
-        if (RANDOM.nextDouble() < MISTAKE_CHANCE) {
+        if (RANDOM.nextDouble() < mistakeChanceForWins(winsVsCpu)) {
             return emptyCells.get(RANDOM.nextInt(emptyCells.size()));
         }
 
