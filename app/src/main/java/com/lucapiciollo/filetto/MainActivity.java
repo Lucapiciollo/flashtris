@@ -47,8 +47,11 @@ import org.json.JSONObject;
 
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.LinkedList;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Random;
 
 /**
@@ -61,8 +64,12 @@ public class MainActivity extends Activity {
 
     private static final String TAG = "FlashTris";
     private static final String SERVICE_ID = "com.lucapiciollo.filetto.nearby";
-    private static final Strategy STRATEGY = Strategy.P2P_POINT_TO_POINT;
+    private static final Strategy STRATEGY = Strategy.P2P_STAR;
     private static final int REQ_PERMISSIONS = 900;
+    /** Max simultaneous guests a hosted room accepts (plus the host itself = up to 6 people at the table). */
+    private static final int MAX_ROOM_GUESTS = 5;
+    /** Sentinel "endpoint id" used in {@link #seatAId}/{@link #seatBId} to mean "the host device itself". */
+    private static final String HOST_SEAT = "\u0000HOST_SEAT\u0000";
 
     private final Random random = new Random();
     private ConnectionsClient connectionsClient;
@@ -85,6 +92,33 @@ public class MainActivity extends Activity {
     private long matchStartMs;
     private int turnsPlayed;
     private final char[] board = new char[9];
+
+    // --- Tournament / queue state ("CREA PARTITA" hosted rooms with more than 2 players) -------------------
+    /** How many wins in a row a player needs against the current opponent before the loser is eliminated. */
+    private int winsToAdvance = 2;
+    /** True once the host has picked its own symbol for the very first match of this room. */
+    private boolean roomInitialized;
+    /** Host-only: nickname of every currently connected guest, keyed by endpoint id (active + queued + eliminated). */
+    private final Map<String, String> roomNicknames = new LinkedHashMap<>();
+    /** Host-only: endpoint ids waiting their turn, in join order. */
+    private final LinkedList<String> roomQueue = new LinkedList<>();
+    /** Host-only: endpoint id (or {@link #HOST_SEAT}) currently occupying each of the two active seats. */
+    private String seatAId;
+    private String seatBId;
+    private char seatASymbol = 'X';
+    private char seatBSymbol = 'O';
+    private int seatAWins;
+    private int seatBWins;
+    /** Host-only: nickname -> {matchesWon, eliminations}, session-only tournament leaderboard. */
+    private final Map<String, int[]> leaderboard = new LinkedHashMap<>();
+    /** Guest-only mirror of the host's broadcasted room dashboard (used to render {@link #showTournamentDashboard()}). */
+    private boolean iAmEliminated;
+    private int queuePosition = -1;
+    private String dashboardActiveA = "";
+    private String dashboardActiveB = "";
+    private int dashboardScoreA;
+    private int dashboardScoreB;
+    private final List<String[]> dashboardLeaderboard = new ArrayList<>();
 
     private LinearLayout root;
     private TextView statusText;
@@ -153,7 +187,7 @@ public class MainActivity extends Activity {
         create.setOnClickListener(v -> {
             sounds.tap();
             host = true;
-            if (ensurePermissions()) startAdvertising();
+            showTournamentSetupScreen();
         });
         root.addView(create);
         root.addView(space(12));
@@ -348,8 +382,71 @@ public class MainActivity extends Activity {
         return v;
     }
 
+    /** Lets the host choose how many wins are needed to eliminate a challenger before opening the room to guests. */
+    private void showTournamentSetupScreen() {
+        stopAmbientAnimator();
+        root = baseRoot();
+        root.addView(title("REGOLE DEL TAVOLO"));
+        root.addView(subtitle("Quante vittorie servono per eliminare lo sfidante ed farne entrare uno nuovo dalla coda?"));
+        root.addView(space(20));
+
+        winsToAdvance = 2;
+        TextView counter = new TextView(this);
+        counter.setTypeface(GameFonts.display(this));
+        counter.setTextSize(52);
+        counter.setTextColor(GameTheme.CYAN);
+        counter.setGravity(Gravity.CENTER);
+        counter.setText(String.valueOf(winsToAdvance));
+
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        Button minus = secondaryButton("−");
+        Button plus = secondaryButton("+");
+        minus.setOnClickListener(v -> {
+            sounds.tap();
+            if (winsToAdvance > 1) counter.setText(String.valueOf(--winsToAdvance));
+        });
+        plus.setOnClickListener(v -> {
+            sounds.tap();
+            if (winsToAdvance < 5) counter.setText(String.valueOf(++winsToAdvance));
+        });
+        row.addView(minus, weighted());
+        row.addView(spaceHorizontal(18));
+        row.addView(counter, weighted());
+        row.addView(spaceHorizontal(18));
+        row.addView(plus, weighted());
+        root.addView(row, matchWrap(0));
+        root.addView(space(16));
+        root.addView(caption("Chi perde il tavolo resta comunque in classifica: può capitare anche a te se arriva uno sfidante più forte."));
+        root.addView(space(20));
+
+        Button confirm = primaryButton("CREA PARTITA");
+        confirm.setOnClickListener(v -> {
+            sounds.tap();
+            if (ensurePermissions()) startAdvertising();
+        });
+        root.addView(confirm);
+        root.addView(space(12));
+        Button back = secondaryButton("INDIETRO");
+        back.setOnClickListener(v -> {
+            sounds.tap();
+            showHome();
+        });
+        root.addView(back);
+        renderScreen(root);
+    }
+
     private void startAdvertising() {
         hostCode = String.format(Locale.ITALY, "%04d", random.nextInt(10000));
+        roomInitialized = false;
+        roomNicknames.clear();
+        roomQueue.clear();
+        leaderboard.clear();
+        seatAId = null;
+        seatBId = null;
+        seatAWins = 0;
+        seatBWins = 0;
         showWaiting("Partita creata", "Sto aspettando un amico vicino…");
         String endpointName = "FlashTris-" + hostCode;
         AdvertisingOptions options = new AdvertisingOptions.Builder().setStrategy(STRATEGY).build();
@@ -415,7 +512,12 @@ public class MainActivity extends Activity {
         @Override
         public void onConnectionInitiated(String id, ConnectionInfo info) {
             Log.i(TAG, "onConnectionInitiated " + id);
-            endpointId = id;
+            if (host && roomNicknames.size() >= MAX_ROOM_GUESTS) {
+                Log.w(TAG, "Room full, rejecting " + id);
+                try { connectionsClient.rejectConnection(id); } catch (Exception e) { Log.w(TAG, "rejectConnection failed", e); }
+                return;
+            }
+            if (!host) endpointId = id;
             try {
                 connectionsClient.acceptConnection(id, payloadCallback);
             } catch (SecurityException e) {
@@ -429,26 +531,50 @@ public class MainActivity extends Activity {
             if (result.getStatus().isSuccess()) {
                 Log.i(TAG, "onConnectionResult success " + id);
                 connected = true;
-                endpointId = id;
-                stopDiscoverySafely();
-                stopAdvertisingSafely();
-                runOnUiThread(() -> {
-                    if (!isFinishing() && !isDestroyed()) {
-                        sounds.connected();
-                        showNicknameScreen();
+                if (host) {
+                    roomNicknames.put(id, "");
+                    boolean firstEver = !roomInitialized;
+                    if (firstEver) {
+                        endpointId = id;
+                        runOnUiThread(() -> {
+                            if (!isFinishing() && !isDestroyed()) {
+                                sounds.connected();
+                                showNicknameScreen();
+                            }
+                        });
+                    } else {
+                        Log.i(TAG, "Guest joined an in-progress room, waiting for their nickname: " + id);
                     }
-                });
+                } else {
+                    endpointId = id;
+                    stopDiscoverySafely();
+                    stopAdvertisingSafely();
+                    runOnUiThread(() -> {
+                        if (!isFinishing() && !isDestroyed()) {
+                            sounds.connected();
+                            showNicknameScreen();
+                        }
+                    });
+                }
             } else {
                 Log.w(TAG, "onConnectionResult failed " + id + " status=" + result.getStatus());
-                endpointId = null;
-                connected = false;
-                runOnUiThread(() -> fail("Connessione rifiutata o non riuscita."));
+                if (host) {
+                    roomNicknames.remove(id);
+                } else {
+                    endpointId = null;
+                    connected = false;
+                    runOnUiThread(() -> fail("Connessione rifiutata o non riuscita."));
+                }
             }
         }
 
         @Override
         public void onDisconnected(String id) {
             Log.w(TAG, "onDisconnected " + id);
+            if (host) {
+                handleGuestDisconnected(id);
+                return;
+            }
             connected = false;
             runOnUiThread(() -> {
                 if (isFinishing() || isDestroyed()) return;
@@ -458,6 +584,30 @@ public class MainActivity extends Activity {
         }
     };
 
+    /** Host-only: a connected guest (queued, active, or eliminated-spectator) dropped its connection. */
+    private void handleGuestDisconnected(String id) {
+        runOnUiThread(() -> {
+            roomNicknames.remove(id);
+            boolean wasQueued = roomQueue.remove(id);
+            boolean wasActive = id.equals(seatAId) || id.equals(seatBId);
+            if (isFinishing() || isDestroyed()) return;
+            if (wasActive) {
+                String remaining = id.equals(seatAId) ? seatBId : seatAId;
+                Toast.makeText(this, "Uno sfidante si è disconnesso.", Toast.LENGTH_SHORT).show();
+                if (remaining == null) {
+                    seatAId = null;
+                    seatBId = null;
+                    showTournamentDashboard();
+                } else {
+                    promoteChallengerInto(remaining);
+                }
+                broadcastQueueStatus();
+            } else if (wasQueued) {
+                broadcastQueueStatus();
+            }
+        });
+    }
+
     private final PayloadCallback payloadCallback = new PayloadCallback() {
         @Override
         public void onPayloadReceived(String id, Payload payload) {
@@ -465,13 +615,14 @@ public class MainActivity extends Activity {
             String raw = new String(payload.asBytes(), StandardCharsets.UTF_8);
             Log.d(TAG, "onPayloadReceived " + raw);
             runOnUiThread(() -> {
-                if (!isFinishing() && !isDestroyed()) handleMessage(raw);
+                if (!isFinishing() && !isDestroyed()) handleMessage(id, raw);
             });
         }
 
         @Override
         public void onPayloadTransferUpdate(String id, PayloadTransferUpdate update) { }
     };
+
 
     private void stopDiscoverySafely() {
         try { connectionsClient.stopDiscovery(); } catch (Exception e) { Log.w(TAG, "stopDiscovery failed", e); }
@@ -605,11 +756,21 @@ public class MainActivity extends Activity {
         matchStartMs = System.currentTimeMillis();
         turnsPlayed = 0;
         clearBoard();
+        if (!vsCpu) {
+            roomInitialized = true;
+            seatAId = HOST_SEAT;
+            seatBId = endpointId;
+            seatASymbol = mySymbol;
+            seatBSymbol = opponentSymbol;
+            seatAWins = 0;
+            seatBWins = 0;
+        }
         JSONObject msg = message("START");
         try {
             msg.put("guestSymbol", String.valueOf(opponentSymbol));
             msg.put("hostName", myNickname);
             msg.put("guestName", opponentNickname);
+            msg.put("winsToAdvance", winsToAdvance);
         } catch (JSONException ignored) { }
         send(msg);
         showGame();
@@ -671,7 +832,14 @@ public class MainActivity extends Activity {
         Button leave = dangerButton("ESCI DALLA PARTITA");
         leave.setOnClickListener(v -> {
             sounds.tap();
-            send(message("LEAVE"));
+            if (!vsCpu) {
+                if (host) {
+                    String opponentSeat = HOST_SEAT.equals(seatAId) ? seatBId : seatAId;
+                    if (opponentSeat != null && !HOST_SEAT.equals(opponentSeat)) sendTo(opponentSeat, message("LEAVE"));
+                } else {
+                    send(message("LEAVE"));
+                }
+            }
             showHome();
         });
         root.addView(leave);
@@ -733,15 +901,33 @@ public class MainActivity extends Activity {
         board[cell] = symbol;
         lastMoveCell = cell;
         turnsPlayed++;
-        char winner = winner();
-        if (winner != ' ') gameOver = true;
+        char winnerSymbol = winner();
+        if (winnerSymbol != ' ') gameOver = true;
         else if (isDraw()) gameOver = true;
         else turn = turn == 'X' ? 'O' : 'X';
         Log.d(TAG, "applyMove cell=" + cell + " symbol=" + symbol + " gameOver=" + gameOver);
-        broadcastState();
-        renderBoard();
-        if (gameOver) showEndDialogAfterDelay();
-        else maybeTriggerCpuMove();
+
+        boolean seriesDecided = false;
+        if (gameOver && winnerSymbol != ' ' && seatBId != null) {
+            if (winnerSymbol == seatASymbol) seatAWins++;
+            else if (winnerSymbol == seatBSymbol) seatBWins++;
+            seriesDecided = seatAWins >= winsToAdvance || seatBWins >= winsToAdvance;
+        }
+
+        relayStateToActiveGuests();
+        if (hostIsActivePlayer()) {
+            renderBoard();
+            if (gameOver) showEndDialogAfterDelay();
+        }
+        if (!gameOver) {
+            maybeTriggerCpuMove();
+        } else if (seatBId != null) {
+            boolean decidedFinal = seriesDecided;
+            new android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(() -> {
+                if (isFinishing() || isDestroyed()) return;
+                if (decidedFinal) concludeSeriesAndRotate(); else autoContinueSeries();
+            }, 2200);
+        }
     }
 
     /** If it's the CPU opponent's turn in vs-CPU mode, computes and plays its move after a short "thinking" delay. */
@@ -756,7 +942,8 @@ public class MainActivity extends Activity {
         }, 550);
     }
 
-    private void broadcastState() {
+    /** Host-only: relays the current board/turn/outcome to whichever of seatA/seatB are real guest endpoints. */
+    private void relayStateToActiveGuests() {
         JSONObject msg = message("STATE");
         try {
             JSONArray arr = new JSONArray();
@@ -766,35 +953,60 @@ public class MainActivity extends Activity {
             msg.put("gameOver", gameOver);
             msg.put("winner", winner() == ' ' ? "" : String.valueOf(winner()));
         } catch (JSONException ignored) { }
-        send(msg);
+        if (seatBId == null) {
+            // Legacy single-opponent path (kept for safety; normally seatBId is always set once a room is initialized).
+            send(msg);
+            return;
+        }
+        if (!HOST_SEAT.equals(seatAId)) sendTo(seatAId, msg);
+        if (!HOST_SEAT.equals(seatBId)) sendTo(seatBId, msg);
     }
 
-    private void handleMessage(String raw) {
+    private void handleMessage(String senderId, String raw) {
         try {
             JSONObject msg = new JSONObject(raw);
             String type = msg.optString("type");
             Log.d(TAG, "handleMessage type=" + type);
             switch (type) {
-                case "NICKNAME":
-                    opponentNickname = msg.optString("name", "Amico");
-                    maybeProceedAfterNicknames();
+                case "NICKNAME": {
+                    String name = msg.optString("name", "Amico");
+                    if (host) {
+                        roomNicknames.put(senderId, name);
+                        if (!roomInitialized) {
+                            opponentNickname = name;
+                            maybeProceedAfterNicknames();
+                        } else {
+                            roomQueue.add(senderId);
+                            broadcastQueueStatus();
+                            Toast.makeText(this, name + " è entrato in coda", Toast.LENGTH_SHORT).show();
+                        }
+                    } else {
+                        opponentNickname = name;
+                        maybeProceedAfterNicknames();
+                    }
                     break;
+                }
                 case "START":
                     if (!host) {
                         mySymbol = msg.optString("guestSymbol", "O").charAt(0);
                         opponentSymbol = mySymbol == 'X' ? 'O' : 'X';
+                        if (msg.has("opponentName")) opponentNickname = msg.optString("opponentName", opponentNickname);
                         turn = 'X';
                         gameOver = false;
                         awaitingMoveResult = false;
                         lastMoveCell = -1;
                         matchStartMs = System.currentTimeMillis();
                         turnsPlayed = 0;
+                        iAmEliminated = false;
                         clearBoard();
                         showGame();
                     }
                     break;
                 case "MOVE_REQUEST":
-                    if (host) applyMove(msg.optInt("cell", -1), opponentSymbol);
+                    if (host) {
+                        char senderSymbol = symbolForSeat(senderId);
+                        if (senderSymbol != ' ') applyMove(msg.optInt("cell", -1), senderSymbol);
+                    }
                     break;
                 case "STATE":
                     if (!host) {
@@ -818,6 +1030,38 @@ public class MainActivity extends Activity {
                         renderBoard();
                         if (gameOver) showEndDialogAfterDelay();
                     }
+                    break;
+                case "QUEUE_STATUS":
+                    if (!host) {
+                        queuePosition = msg.optInt("position", 0);
+                        dashboardActiveA = msg.optString("activeA", "");
+                        dashboardActiveB = msg.optString("activeB", "");
+                        dashboardScoreA = msg.optInt("scoreA", 0);
+                        dashboardScoreB = msg.optInt("scoreB", 0);
+                        dashboardLeaderboard.clear();
+                        JSONArray lb = msg.optJSONArray("leaderboard");
+                        if (lb != null) {
+                            for (int i = 0; i < lb.length(); i++) {
+                                JSONObject o = lb.optJSONObject(i);
+                                if (o == null) continue;
+                                dashboardLeaderboard.add(new String[]{
+                                        o.optString("name", ""),
+                                        String.valueOf(o.optInt("wins", 0)),
+                                        String.valueOf(o.optInt("eliminations", 0))
+                                });
+                            }
+                        }
+                        if (!isFinishing() && !isDestroyed()) showTournamentDashboard();
+                    }
+                    break;
+                case "ELIMINATED":
+                    if (!host) {
+                        iAmEliminated = true;
+                        if (!isFinishing() && !isDestroyed()) showTournamentDashboard();
+                    }
+                    break;
+                case "WAITING_FOR_CHALLENGER":
+                    if (!host && !isFinishing() && !isDestroyed()) showTournamentDashboard();
                     break;
                 case "REMATCH_REQUEST":
                     if (host && !isFinishing() && !isDestroyed()) {
@@ -955,7 +1199,7 @@ public class MainActivity extends Activity {
         root.addView(matchStatsCard, matchWrap(0));
         root.addView(space(20));
 
-        if (host) {
+        if (vsCpu) {
             Button rematch = primaryButton("RIVINCITA");
             rematch.setOnClickListener(v -> {
                 sounds.tap();
@@ -963,15 +1207,9 @@ public class MainActivity extends Activity {
             });
             root.addView(rematch);
         } else {
-            Button askRematch = primaryButton("CHIEDI RIVINCITA");
-            askRematch.setOnClickListener(v -> {
-                sounds.tap();
-                send(message("REMATCH_REQUEST"));
-                askRematch.setEnabled(false);
-                askRematch.setText("RICHIESTA INVIATA…");
-                Toast.makeText(this, "Richiesta inviata", Toast.LENGTH_SHORT).show();
-            });
-            root.addView(askRematch);
+            TextView autoInfo = caption("La partita continua tra poco…");
+            autoInfo.setGravity(Gravity.CENTER);
+            root.addView(autoInfo);
         }
         root.addView(space(12));
         Button newHome = secondaryButton("NUOVA HOME");
@@ -1204,6 +1442,275 @@ public class MainActivity extends Activity {
         }
     }
 
+    /** Host-only: sends a message to one specific connected guest endpoint (used once a room has more than one guest). */
+    private void sendTo(String targetEndpointId, JSONObject message) {
+        if (targetEndpointId == null || HOST_SEAT.equals(targetEndpointId)) return;
+        byte[] bytes = message.toString().getBytes(StandardCharsets.UTF_8);
+        try {
+            connectionsClient.sendPayload(targetEndpointId, Payload.fromBytes(bytes));
+        } catch (Exception e) {
+            Log.e(TAG, "sendPayload (sendTo) failed for " + targetEndpointId, e);
+        }
+    }
+
+    // --- Tournament / queue engine (host-authoritative) --------------------------------------------------
+
+    private boolean hostIsActivePlayer() {
+        return HOST_SEAT.equals(seatAId) || HOST_SEAT.equals(seatBId);
+    }
+
+    private char symbolForSeat(String seatId) {
+        if (seatId == null) return ' ';
+        if (seatId.equals(seatAId)) return seatASymbol;
+        if (seatId.equals(seatBId)) return seatBSymbol;
+        return ' ';
+    }
+
+    private String nicknameForSeat(String seatId) {
+        if (seatId == null) return "";
+        if (HOST_SEAT.equals(seatId)) return myNickname;
+        String n = roomNicknames.get(seatId);
+        return n == null || n.isEmpty() ? "Sfidante" : n;
+    }
+
+    private JSONObject withGuestSymbol(String type, char symbol) {
+        JSONObject m = message(type);
+        try {
+            m.put("guestSymbol", String.valueOf(symbol));
+            m.put("winsToAdvance", winsToAdvance);
+        } catch (JSONException ignored) { }
+        return m;
+    }
+
+    private void recordLeaderboardResult(String nickname, boolean won) {
+        int[] entry = leaderboard.get(nickname);
+        if (entry == null) {
+            entry = new int[]{0, 0};
+            leaderboard.put(nickname, entry);
+        }
+        if (won) entry[0]++; else entry[1]++;
+    }
+
+    private List<String[]> hostLeaderboardRows() {
+        List<Map.Entry<String, int[]>> entries = new ArrayList<>(leaderboard.entrySet());
+        entries.sort((a, b) -> b.getValue()[0] - a.getValue()[0]);
+        List<String[]> rows = new ArrayList<>();
+        for (Map.Entry<String, int[]> e : entries) {
+            rows.add(new String[]{e.getKey(), String.valueOf(e.getValue()[0]), String.valueOf(e.getValue()[1])});
+        }
+        return rows;
+    }
+
+    private JSONArray leaderboardJson() {
+        JSONArray arr = new JSONArray();
+        for (String[] row : hostLeaderboardRows()) {
+            JSONObject o = new JSONObject();
+            try {
+                o.put("name", row[0]);
+                o.put("wins", Integer.parseInt(row[1]));
+                o.put("eliminations", Integer.parseInt(row[2]));
+            } catch (JSONException ignored) { }
+            arr.put(o);
+        }
+        return arr;
+    }
+
+    /** Host-only: pushes the current match score + queue position + leaderboard to every non-active connected guest. */
+    private void broadcastQueueStatus() {
+        JSONArray board = leaderboardJson();
+        int pos = 1;
+        for (String id : roomQueue) {
+            sendTo(id, queueStatusMessage(pos, board));
+            pos++;
+        }
+        for (String id : roomNicknames.keySet()) {
+            if (id.equals(seatAId) || id.equals(seatBId) || roomQueue.contains(id)) continue;
+            sendTo(id, queueStatusMessage(0, board));
+        }
+    }
+
+    private JSONObject queueStatusMessage(int position, JSONArray leaderboardArr) {
+        JSONObject msg = message("QUEUE_STATUS");
+        try {
+            msg.put("position", position);
+            msg.put("activeA", nicknameForSeat(seatAId));
+            msg.put("activeB", seatBId == null ? "" : nicknameForSeat(seatBId));
+            msg.put("scoreA", seatAWins);
+            msg.put("scoreB", seatBWins);
+            msg.put("winsToAdvance", winsToAdvance);
+            msg.put("leaderboard", leaderboardArr);
+        } catch (JSONException ignored) { }
+        return msg;
+    }
+
+    /** Host-only: same two seats play another game in the series (nobody reached {@link #winsToAdvance} yet). */
+    private void autoContinueSeries() {
+        char oldA = seatASymbol;
+        seatASymbol = seatBSymbol;
+        seatBSymbol = oldA;
+        clearBoard();
+        turn = 'X';
+        gameOver = false;
+        awaitingMoveResult = false;
+        lastMoveCell = -1;
+        matchStartMs = System.currentTimeMillis();
+        turnsPlayed = 0;
+
+        if (HOST_SEAT.equals(seatAId)) { mySymbol = seatASymbol; opponentSymbol = seatBSymbol; }
+        else if (HOST_SEAT.equals(seatBId)) { mySymbol = seatBSymbol; opponentSymbol = seatASymbol; }
+
+        if (!HOST_SEAT.equals(seatAId)) sendTo(seatAId, withGuestSymbol("REMATCH_START", seatASymbol));
+        if (!HOST_SEAT.equals(seatBId)) sendTo(seatBId, withGuestSymbol("REMATCH_START", seatBSymbol));
+        if (hostIsActivePlayer()) showGame();
+    }
+
+    /** Host-only: one seat just reached {@link #winsToAdvance}; the loser is eliminated, the winner faces the next in queue. */
+    private void concludeSeriesAndRotate() {
+        boolean aWonSeries = seatAWins >= winsToAdvance;
+        String winnerId = aWonSeries ? seatAId : seatBId;
+        String loserId = aWonSeries ? seatBId : seatAId;
+        recordLeaderboardResult(nicknameForSeat(winnerId), true);
+        recordLeaderboardResult(nicknameForSeat(loserId), false);
+        if (HOST_SEAT.equals(loserId)) {
+            iAmEliminated = true;
+        } else {
+            sendTo(loserId, message("ELIMINATED"));
+        }
+        promoteChallengerInto(winnerId);
+        if (!hostIsActivePlayer()) showTournamentDashboard();
+        broadcastQueueStatus();
+    }
+
+    /** Host-only: seats {@code staySeatId} against the next queued challenger (or leaves it waiting if the queue is empty). */
+    private void promoteChallengerInto(String staySeatId) {
+        seatAWins = 0;
+        seatBWins = 0;
+        clearBoard();
+        turn = 'X';
+        gameOver = false;
+        awaitingMoveResult = false;
+        lastMoveCell = -1;
+        matchStartMs = System.currentTimeMillis();
+        turnsPlayed = 0;
+
+        if (roomQueue.isEmpty()) {
+            seatAId = staySeatId;
+            seatBId = null;
+            if (HOST_SEAT.equals(staySeatId)) {
+                mySymbol = ' ';
+                opponentSymbol = ' ';
+                showTournamentDashboard();
+            } else {
+                sendTo(staySeatId, message("WAITING_FOR_CHALLENGER"));
+            }
+            return;
+        }
+
+        String nextId = roomQueue.removeFirst();
+        seatAId = staySeatId;
+        seatBId = nextId;
+        seatASymbol = 'X';
+        seatBSymbol = 'O';
+
+        if (HOST_SEAT.equals(staySeatId)) {
+            mySymbol = 'X';
+            opponentSymbol = 'O';
+            endpointId = nextId;
+        } else {
+            JSONObject toStaying = withGuestSymbol("START", 'X');
+            try { toStaying.put("opponentName", nicknameForSeat(nextId)); } catch (JSONException ignored) { }
+            sendTo(staySeatId, toStaying);
+        }
+
+        JSONObject toNew = withGuestSymbol("START", 'O');
+        try { toNew.put("opponentName", nicknameForSeat(staySeatId)); } catch (JSONException ignored) { }
+        sendTo(nextId, toNew);
+
+        if (hostIsActivePlayer()) showGame();
+    }
+
+    /** Spectator/queue dashboard: shown to guests waiting their turn, eliminated players, and the host once it's no longer playing. */
+    private void showTournamentDashboard() {
+        stopAmbientAnimator();
+        root = baseRoot();
+
+        String activeA = host ? nicknameForSeat(seatAId) : dashboardActiveA;
+        String activeB = host ? (seatBId == null ? "" : nicknameForSeat(seatBId)) : dashboardActiveB;
+        int scoreA = host ? seatAWins : dashboardScoreA;
+        int scoreB = host ? seatBWins : dashboardScoreB;
+        List<String[]> rows = host ? hostLeaderboardRows() : dashboardLeaderboard;
+
+        boolean queued = !host && !iAmEliminated && queuePosition > 0;
+        root.addView(title(iAmEliminated ? "SEI ELIMINATO" : (queued ? "IN CODA" : "TAVOLO DEL TORNEO")));
+        String subtitleText;
+        if (iAmEliminated) subtitleText = "Resti in classifica per questa sessione: segui la sfida qui sotto.";
+        else if (host) subtitleText = "Sei il tavolo del torneo: in attesa di un nuovo sfidante.";
+        else if (queued) subtitleText = "Tocca a te tra poco: sei il numero " + queuePosition + " in coda.";
+        else subtitleText = "Hai vinto la sfida! Aspetta il prossimo avversario.";
+        root.addView(subtitle(subtitleText));
+        root.addView(space(18));
+
+        FrameLayout matchCard = new FrameLayout(this);
+        matchCard.setBackground(GameTheme.glowPanel(GameTheme.BG_PANEL, GameTheme.CYAN, dp(16), dp(2), dp(6)));
+        matchCard.setElevation(dp(4));
+        LinearLayout matchCol = new LinearLayout(this);
+        matchCol.setOrientation(LinearLayout.VERTICAL);
+        matchCol.setGravity(Gravity.CENTER);
+        int pad = dp(16);
+        matchCol.setPadding(pad, pad, pad, pad);
+        matchCol.addView(caption("SFIDA IN CORSO"));
+        TextView vsLine = new TextView(this);
+        vsLine.setText((activeA.isEmpty() ? "?" : activeA) + "  " + scoreA + " - " + scoreB + "  " + (activeB.isEmpty() ? "in attesa…" : activeB));
+        vsLine.setTextColor(GameTheme.TEXT_PRIMARY);
+        vsLine.setTypeface(GameFonts.bold(this));
+        vsLine.setTextSize(16);
+        vsLine.setGravity(Gravity.CENTER);
+        vsLine.setPadding(0, dp(6), 0, 0);
+        matchCol.addView(vsLine);
+        matchCard.addView(matchCol);
+        root.addView(matchCard, matchWrap(0));
+        root.addView(space(20));
+
+        root.addView(caption("CLASSIFICA DEL TORNEO"));
+        root.addView(space(8));
+        if (rows.isEmpty()) {
+            root.addView(caption("Nessun risultato ancora."));
+        } else {
+            for (String[] row : rows) {
+                FrameLayout card = new FrameLayout(this);
+                card.setBackground(GameTheme.roundedStroke(GameTheme.BG_PANEL, GameTheme.BG_PANEL_LIGHT, dp(12), dp(2)));
+                card.setElevation(dp(2));
+                LinearLayout r = new LinearLayout(this);
+                r.setOrientation(LinearLayout.HORIZONTAL);
+                r.setGravity(Gravity.CENTER_VERTICAL);
+                int rp = dp(12);
+                r.setPadding(rp, dp(8), rp, dp(8));
+                TextView name = new TextView(this);
+                name.setText(row[0]);
+                name.setTextColor(GameTheme.TEXT_PRIMARY);
+                name.setTypeface(GameFonts.bold(this));
+                name.setTextSize(14);
+                r.addView(name, weighted());
+                TextView wins = new TextView(this);
+                wins.setText(row[1] + " 🏆");
+                wins.setTextColor(GameTheme.LIME);
+                wins.setTextSize(13);
+                r.addView(wins);
+                card.addView(r);
+                root.addView(card, matchWrap(dp(6)));
+            }
+        }
+        root.addView(space(20));
+
+        Button leave = secondaryButton(host ? "CHIUDI IL TAVOLO" : "TORNA ALLA HOME");
+        leave.setOnClickListener(v -> {
+            sounds.tap();
+            showHome();
+        });
+        root.addView(leave);
+        renderScreen(root);
+    }
+
     private void fail(String message) {
         Log.e(TAG, "fail: " + message);
         Toast.makeText(this, message, Toast.LENGTH_LONG).show();
@@ -1232,6 +1739,24 @@ public class MainActivity extends Activity {
         turn = 'X';
         gameOver = false;
         awaitingMoveResult = false;
+        winsToAdvance = 2;
+        roomInitialized = false;
+        roomNicknames.clear();
+        roomQueue.clear();
+        leaderboard.clear();
+        seatAId = null;
+        seatBId = null;
+        seatASymbol = 'X';
+        seatBSymbol = 'O';
+        seatAWins = 0;
+        seatBWins = 0;
+        iAmEliminated = false;
+        queuePosition = -1;
+        dashboardActiveA = "";
+        dashboardActiveB = "";
+        dashboardScoreA = 0;
+        dashboardScoreB = 0;
+        dashboardLeaderboard.clear();
         clearBoard();
     }
 
