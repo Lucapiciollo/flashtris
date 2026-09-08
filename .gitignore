@@ -36,3 +36,7 @@ keystore/
 !gradle/wrapper/gradle-wrapper.properties
 !gradlew
 !gradlew.bat
+device_screen.png
+window_dump.xml
+window_dump_pretty.xml
+
