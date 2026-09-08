@@ -1,0 +1,9 @@
+{
+  "name": "flashtris",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Build tooling for the FlashTris Android app.",
+  "scripts": {
+    "release": "node scripts/release.js"
+  }
+}
