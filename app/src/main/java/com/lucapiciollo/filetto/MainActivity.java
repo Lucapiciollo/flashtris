@@ -387,7 +387,7 @@ public class MainActivity extends Activity {
         stopAmbientAnimator();
         root = baseRoot();
         root.addView(title("REGOLE DEL TAVOLO"));
-        root.addView(subtitle("Quante vittorie servono per eliminare lo sfidante ed farne entrare uno nuovo dalla coda?"));
+        root.addView(subtitle("Quante vittorie servono per eliminare lo sfidante e farne entrare uno nuovo dalla coda?"));
         root.addView(space(20));
 
         winsToAdvance = 2;
@@ -915,7 +915,7 @@ public class MainActivity extends Activity {
         }
 
         relayStateToActiveGuests();
-        if (hostIsActivePlayer()) {
+        if (vsCpu || hostIsActivePlayer()) {
             renderBoard();
             if (gameOver) showEndDialogAfterDelay();
         }
