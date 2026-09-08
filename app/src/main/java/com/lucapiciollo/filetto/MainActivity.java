@@ -158,6 +158,7 @@ public class MainActivity extends Activity {
         stopEverything();
         GameAnimations.stop(activeAmbientAnimator);
         if (sounds != null) sounds.release();
+        GameUpdateChecker.unregister();
     }
 
     private void showHome() {
