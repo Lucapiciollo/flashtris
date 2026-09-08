@@ -188,6 +188,7 @@ public class MainActivity extends Activity {
         tile.setClickable(true);
         tile.setFocusable(true);
         tile.setMinimumHeight(dp(76));
+        tile.setElevation(dp(3));
         GameAnimations.pressFeedback(tile);
         TextView glyphView = new TextView(this);
         glyphView.setText(glyph);
@@ -218,6 +219,7 @@ public class MainActivity extends Activity {
         tile.setClickable(true);
         tile.setFocusable(true);
         tile.setMinimumHeight(dp(76));
+        tile.setElevation(dp(3));
         GameAnimations.pressFeedback(tile);
 
         FrameLayout glyphWrap = new FrameLayout(this);
@@ -252,6 +254,7 @@ public class MainActivity extends Activity {
     private View miniGridPreview() {
         FrameLayout card = new FrameLayout(this);
         card.setBackground(GameTheme.glowPanel(GameTheme.BG_PANEL, GameTheme.VIOLET, dp(18), dp(2), dp(6)));
+        card.setElevation(dp(4));
         int pad = dp(14);
         card.setPadding(pad, pad, pad, pad);
 
@@ -266,7 +269,7 @@ public class MainActivity extends Activity {
             cell.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
             cell.setTextSize(20);
             cell.setTextColor(preview[i] == 'X' ? GameTheme.SYMBOL_X : GameTheme.SYMBOL_O);
-            cell.setBackground(GameTheme.roundedFill(GameTheme.BG_CELL, dp(8)));
+            cell.setBackground(GameTheme.insetFill(GameTheme.BG_CELL, dp(8)));
             GridLayout.LayoutParams lp = new GridLayout.LayoutParams();
             lp.width = dp(46);
             lp.height = dp(46);
@@ -542,6 +545,7 @@ public class MainActivity extends Activity {
     private View symbolCard(char symbol, int accentColor) {
         FrameLayout card = new FrameLayout(this);
         card.setBackground(GameTheme.glowPanel(GameTheme.BG_PANEL, accentColor, dp(20), dp(3), dp(8)));
+        card.setElevation(dp(4));
         card.setClickable(true);
         card.setFocusable(true);
         GameAnimations.pressFeedback(card);
@@ -621,7 +625,7 @@ public class MainActivity extends Activity {
             b.setTypeface(Typeface.DEFAULT, Typeface.BOLD);
             b.setAllCaps(false);
             b.setMinHeight(dp(94));
-            b.setBackground(GameTheme.withRipple(GameTheme.roundedStroke(GameTheme.BG_CELL, GameTheme.BG_PANEL_LIGHT, dp(12), dp(2)), GameTheme.CYAN));
+            b.setBackground(GameTheme.withRipple(GameTheme.insetStroke(GameTheme.BG_CELL, GameTheme.BG_PANEL_LIGHT, dp(12), dp(2)), GameTheme.CYAN));
             GameAnimations.pressFeedback(b);
             b.setOnClickListener(v -> onCellPressed(cell));
             GridLayout.LayoutParams lp = new GridLayout.LayoutParams();
@@ -874,6 +878,7 @@ public class MainActivity extends Activity {
         int[] winLine = winningLineCells();
         FrameLayout boardCard = new FrameLayout(this);
         boardCard.setBackground(GameTheme.glowPanel(GameTheme.BG_PANEL, accent, dp(18), dp(2), dp(6)));
+        boardCard.setElevation(dp(4));
         int pad = dp(14);
         boardCard.setPadding(pad, pad, pad, pad);
         GridLayout grid = new GridLayout(this);
@@ -889,8 +894,8 @@ public class MainActivity extends Activity {
             cell.setTextSize(24);
             cell.setTextColor(c == 'X' ? GameTheme.SYMBOL_X : GameTheme.SYMBOL_O);
             cell.setBackground(onLine
-                    ? GameTheme.roundedStroke(GameTheme.BG_CELL, GameTheme.LIME, dp(8), dp(2))
-                    : GameTheme.roundedFill(GameTheme.BG_CELL, dp(8)));
+                    ? GameTheme.insetStroke(GameTheme.BG_CELL, GameTheme.LIME, dp(8), dp(2))
+                    : GameTheme.insetFill(GameTheme.BG_CELL, dp(8)));
             GridLayout.LayoutParams lp = new GridLayout.LayoutParams();
             lp.width = dp(58);
             lp.height = dp(58);
@@ -973,7 +978,7 @@ public class MainActivity extends Activity {
             b.setEnabled(!gameOver && c == ' ' && turn == mySymbol && !awaitingMoveResult);
             boolean onLine = winLine != null && (i == winLine[0] || i == winLine[1] || i == winLine[2]);
             int borderColor = onLine ? GameTheme.LIME : (i == lastMoveCell ? GameTheme.CYAN : GameTheme.BG_PANEL_LIGHT);
-            b.setBackground(GameTheme.withRipple(GameTheme.roundedStroke(GameTheme.BG_CELL, borderColor, dp(12), dp(2)), GameTheme.CYAN));
+            b.setBackground(GameTheme.withRipple(GameTheme.insetStroke(GameTheme.BG_CELL, borderColor, dp(12), dp(2)), GameTheme.CYAN));
             if (i == lastMoveCell && c != ' ') GameAnimations.popIn(b);
         }
         if (gameOver) {
@@ -1263,6 +1268,7 @@ public class MainActivity extends Activity {
         b.setBackground(GameTheme.primaryButtonBackground(dp(16)));
         b.setMinHeight(dp(58));
         b.setLayoutParams(matchWrap(dp(4)));
+        b.setElevation(dp(5));
         GameAnimations.pressFeedback(b);
         return b;
     }
@@ -1277,6 +1283,7 @@ public class MainActivity extends Activity {
         b.setBackground(GameTheme.secondaryButtonBackground(dp(16)));
         b.setMinHeight(dp(54));
         b.setLayoutParams(matchWrap(dp(4)));
+        b.setElevation(dp(3));
         GameAnimations.pressFeedback(b);
         return b;
     }
@@ -1291,6 +1298,7 @@ public class MainActivity extends Activity {
         b.setBackground(GameTheme.dangerButtonBackground(dp(16)));
         b.setMinHeight(dp(48));
         b.setLayoutParams(matchWrap(dp(4)));
+        b.setElevation(dp(2));
         GameAnimations.pressFeedback(b);
         return b;
     }
@@ -1342,6 +1350,7 @@ public class MainActivity extends Activity {
 
         FrameLayout streakCard = new FrameLayout(this);
         streakCard.setBackground(GameTheme.glowPanel(GameTheme.BG_PANEL, GameTheme.LIME, dp(16), dp(2), dp(6)));
+        streakCard.setElevation(dp(4));
         LinearLayout streakRow = new LinearLayout(this);
         streakRow.setOrientation(LinearLayout.HORIZONTAL);
         int streakPad = dp(16);
@@ -1414,6 +1423,7 @@ public class MainActivity extends Activity {
 
         FrameLayout avatarCard = new FrameLayout(this);
         avatarCard.setBackground(GameTheme.glowPanel(GameTheme.BG_PANEL, GameTheme.VIOLET, dp(50), dp(2), dp(6)));
+        avatarCard.setElevation(dp(4));
         TextView avatarView = new TextView(this);
         avatarView.setText(stats.getAvatar());
         avatarView.setTextSize(48);
