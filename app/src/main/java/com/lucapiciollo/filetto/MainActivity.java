@@ -982,7 +982,10 @@ public class MainActivity extends Activity {
         root.addView(newHome);
 
         renderScreen(root);
-        if (iWon) GameAnimations.celebrate(headlineView);
+        if (iWon) {
+            GameAnimations.celebrate(headlineView);
+            headlineView.postDelayed(() -> GameReviewPrompt.maybeRequestReview(this), 1200L);
+        }
     }
 
     private static final int[][] WIN_LINES = {
