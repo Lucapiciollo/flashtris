@@ -1037,17 +1037,21 @@ public class MainActivity extends Activity {
                     String name = msg.optString("name", "Amico");
                     if (host) {
                         if (tableMode == TournamentMode.CLASSIC_P2P) {
-                            opponentNickname = name;
-                            maybeProceedAfterNicknames();
-                        } else if (engine == null) {
-                            if (senderId.equals(pendingFirstGuestId)) {
+                            showJoinRequestDialog(senderId, name, () -> {
                                 opponentNickname = name;
                                 maybeProceedAfterNicknames();
+                            });
+                        } else if (engine == null) {
+                            if (senderId.equals(pendingFirstGuestId)) {
+                                showJoinRequestDialog(senderId, name, () -> {
+                                    opponentNickname = name;
+                                    maybeProceedAfterNicknames();
+                                });
                             } else {
                                 preInitOverflowNicknames.put(senderId, name);
                             }
                         } else {
-                            handleAdmitOutcome(senderId, name, engine.admitGuest(senderId, name));
+                            showJoinRequestDialog(senderId, name, () -> handleAdmitOutcome(senderId, name, engine.admitGuest(senderId, name)));
                         }
                     } else {
                         opponentNickname = name;
@@ -1177,10 +1181,49 @@ public class MainActivity extends Activity {
                     styledDialog("PARTITA TERMINATA", opponentNickname + " è uscito dalla partita.", false,
                             "HOME", (d, w) -> showHome(), null, null).show();
                     break;
+                case "JOIN_REJECTED":
+                    if (!host && !isFinishing() && !isDestroyed()) {
+                        styledDialog("RICHIESTA RIFIUTATA", "L'host ha rifiutato la tua richiesta di ingresso.", false,
+                                "HOME", (d, w) -> showHome(), null, null).show();
+                    }
+                    break;
             }
         } catch (Exception e) {
             Log.e(TAG, "handleMessage failed to parse payload", e);
             Toast.makeText(this, "Messaggio non valido", Toast.LENGTH_SHORT).show();
+        }
+    }
+
+    /** Host-only: shows a themed accept/reject dialog for an incoming guest's join request before admitting them into any seat/queue/engine state. */
+    private void showJoinRequestDialog(String senderId, String name, Runnable onAccept) {
+        if (isFinishing() || isDestroyed()) return;
+        styledDialog(name.toUpperCase(Locale.ITALY) + " VUOLE ENTRARE", "Vuoi ammetterlo alla partita?", false,
+                "ACCETTA", (d, w) -> onAccept.run(),
+                "RIFIUTA", (d, w) -> rejectJoinRequest(senderId)).show();
+    }
+
+    /** Host-only: rejects a pending join request. Notifies the guest and drops the connection without ever touching seat/queue/engine state. */
+    private void rejectJoinRequest(String senderId) {
+        sendTo(senderId, message("JOIN_REJECTED"));
+        connectedEndpointIds.remove(senderId);
+        preInitOverflowNicknames.remove(senderId);
+        boolean wasPendingFirst = senderId.equals(pendingFirstGuestId);
+        if (wasPendingFirst) pendingFirstGuestId = null;
+        if (senderId.equals(endpointId)) endpointId = null;
+        new android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(() -> {
+            try { connectionsClient.disconnectFromEndpoint(senderId); } catch (Exception ignored) { }
+        }, 400);
+        if (wasPendingFirst && tableMode == TournamentMode.TOURNAMENT && engine == null && !preInitOverflowNicknames.isEmpty()) {
+            Map.Entry<String, String> next = preInitOverflowNicknames.entrySet().iterator().next();
+            String nextId = next.getKey();
+            String nextName = next.getValue();
+            preInitOverflowNicknames.remove(nextId);
+            pendingFirstGuestId = nextId;
+            endpointId = nextId;
+            showJoinRequestDialog(nextId, nextName, () -> {
+                opponentNickname = nextName;
+                maybeProceedAfterNicknames();
+            });
         }
     }
 
